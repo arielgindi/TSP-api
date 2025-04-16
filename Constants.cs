@@ -2,7 +2,7 @@ namespace RouteOptimizationApi
 {
     public static class Constants
     {
-        public const string DistanceUnit = "d.u.";
+        public const string DistanceUnit = "meters";
         public const int MaxRouteDisplay = 40;
         public const int MaxAttempts = 30000;
         public const double ImprovementThreshold = 1e-9;
