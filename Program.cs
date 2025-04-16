@@ -18,61 +18,43 @@ namespace RouteOptimizationApi
         public int MinCoordinate { get; set; } = -10000;
         public int MaxCoordinate { get; set; } = 10000;
     }
-
     public class DriverRoute
     {
         public int DriverId { get; set; }
-        public List<Delivery> RoutePoints { get; set; } = new List<Delivery>();
-        public List<int> DeliveryIds { get; set; } = new List<int>();
+        public List<Delivery> RoutePoints { get; set; } = new();
+        public List<int> DeliveryIds { get; set; } = new();
         public double Distance { get; set; }
-        public List<int> OriginalIndices { get; set; } = new List<int>();
+        public List<int> OriginalIndices { get; set; } = new();
     }
-
-    // --- OptimizationResult modified ---
     public class OptimizationResult
     {
         public string BestMethod { get; set; } = string.Empty;
-        public List<Delivery> GeneratedDeliveries { get; set; } = new List<Delivery>();
-        public List<Delivery> OptimizedRoute { get; set; } = new List<Delivery>();
+        public List<Delivery> GeneratedDeliveries { get; set; } = new();
+        public List<Delivery> OptimizedRoute { get; set; } = new();
         public int[] BestCutIndices { get; set; } = Array.Empty<int>();
         public double MinMakespan { get; set; }
-        public List<DriverRoute> DriverRoutes { get; set; } = new List<DriverRoute>();
+        public List<DriverRoute> DriverRoutes { get; set; } = new();
         public double InitialDistanceNN { get; set; }
         public double OptimizedDistanceNN { get; set; }
-        public double InitialDistanceCWS { get; set; } // Changed from GI
-        public double OptimizedDistanceCWS { get; set; } // Changed from GI
+        public double InitialDistanceCWS { get; set; }
+        public double OptimizedDistanceCWS { get; set; }
         public string ErrorMessage { get; set; } = string.Empty;
         public double TotalExecutionTimeMs { get; set; }
-        public double PathExecutionTimeMs { get; set; } // Stores the time for the *best* path
+        public double PathExecutionTimeMs { get; set; }
     }
-    // --- End of OptimizationResult modification ---
-
-
     public class Delivery
     {
         public int Id { get; }
         public int X { get; }
         public int Y { get; }
-
-        public Delivery(int id, int x, int y)
-        {
-            Id = id;
-            X = x;
-            Y = y;
-        }
-
-        public override string ToString()
-        {
-            if (Id == 0) return "Depot(0,0)";
-            return "Delivery#" + Id + "(" + X + "," + Y + ")";
-        }
+        public Delivery(int id, int x, int y) { Id = id; X = x; Y = y; }
+        public override string ToString() => Id == 0 ? "Depot(0,0)" : $"Delivery#{Id}({X},{Y})";
     }
-
     public class Program
     {
         public static async Task Main(string[] args)
         {
-            WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
+            var builder = WebApplication.CreateBuilder(args);
             builder.Services.AddEndpointsApiExplorer();
             builder.Services.AddSwaggerGen();
             builder.Services.AddSignalR();
@@ -80,175 +62,149 @@ namespace RouteOptimizationApi
             {
                 options.AddPolicy("AllowNextApp", policy =>
                 {
-                    policy.WithOrigins("http://localhost:3000") // Adjust if your frontend runs elsewhere
-                          .AllowAnyHeader()
-                          .AllowAnyMethod()
-                          .AllowCredentials();
+                    policy.WithOrigins("http://localhost:3000")
+                          .AllowAnyHeader().AllowAnyMethod().AllowCredentials();
                 });
             });
 
-            WebApplication app = builder.Build();
-
+            var app = builder.Build();
             if (app.Environment.IsDevelopment())
             {
                 app.UseSwagger();
                 app.UseSwaggerUI();
                 app.UseDeveloperExceptionPage();
             }
-
             app.UseCors("AllowNextApp");
-
             app.MapHub<OptimizationHub>("/optimizationhub");
 
-            app.MapPost("/api/optimize", async (OptimizationRequest request, IHostApplicationLifetime lifetime, IHubContext<OptimizationHub> hubContext) =>
+            app.MapPost("/api/optimize", async (OptimizationRequest request,
+                IHostApplicationLifetime lifetime,
+                IHubContext<OptimizationHub> hubContext) =>
             {
-                Stopwatch overallStopwatch = new Stopwatch();
-                overallStopwatch.Start();
-                OptimizationResult? nnResultData = null;
-                OptimizationResult? cwsResultData = null; // Changed from giResultData
-                OptimizationResult finalCombinedResult = new OptimizationResult();
+                var overallStopwatch = Stopwatch.StartNew();
+                OptimizationResult? nnResultData = null, cwsResultData = null;
+                var finalCombinedResult = new OptimizationResult();
+
+                // Local helper to send progress messages:
+                async Task Log(string step, string msg, string style, object? data = null, bool clear = false)
+                {
+                    await hubContext.Clients.All.SendAsync("ReceiveMessage", new ProgressUpdate(step, msg, style, data, clear));
+                }
 
                 try
                 {
-                    await SendProgressUpdate(hubContext, "INIT", "Starting Optimization Process...", "header");
-                    await SendProgressUpdate(hubContext, "SETUP", $"Scenario: {request.NumberOfDeliveries} deliveries, {request.NumberOfDrivers} drivers.", "info");
-                    await SendProgressUpdate(hubContext, "SETUP", $"Coordinate Range: [{request.MinCoordinate}, {request.MaxCoordinate}]", "info");
-                    await SendProgressUpdate(hubContext, "SETUP", $"Depot: {TspAlgorithm.Depot}", "info");
-                    // --- Updated Heuristics ---
-                    await SendProgressUpdate(hubContext, "SETUP", "Heuristics: Nearest Neighbor, Clarke-Wright Savings", "info");
-                    // --- End Update ---
-                    await SendProgressUpdate(hubContext, "SETUP", "Optimization: 2-Opt", "info");
-                    await SendProgressUpdate(hubContext, "SETUP", "Partitioning Goal: Minimize Makespan (Binary Search)", "info");
+                    await Log("INIT", "Starting Optimization Process...", "header");
+                    await Log("SETUP", $"Scenario: {request.NumberOfDeliveries} deliveries, {request.NumberOfDrivers} drivers.", "info");
+                    await Log("SETUP", $"Coordinate Range: [{request.MinCoordinate}, {request.MaxCoordinate}]", "info");
+                    await Log("SETUP", $"Depot: {TspAlgorithm.Depot}", "info");
+                    await Log("SETUP", "Heuristics: Nearest Neighbor, Clarke-Wright Savings", "info");
+                    await Log("SETUP", "Optimization: 2-Opt", "info");
+                    await Log("SETUP", "Partitioning Goal: Minimize Makespan (Binary Search)", "info");
 
                     if (request.NumberOfDeliveries <= 0 || request.NumberOfDrivers <= 0)
-                    {
                         throw new ArgumentException("Number of deliveries and drivers must be positive.");
-                    }
                     if (request.MinCoordinate >= request.MaxCoordinate)
-                    {
                         throw new ArgumentException("Min coordinate must be less than Max coordinate.");
-                    }
                     if (request.NumberOfDeliveries < request.NumberOfDrivers)
-                    {
-                        await SendProgressUpdate(hubContext, "SETUP", $"Warning: Fewer deliveries ({request.NumberOfDeliveries}) than drivers ({request.NumberOfDrivers}). Some drivers may have no route.", "warning");
-                    }
+                        await Log("SETUP",
+                            $"Warning: Fewer deliveries ({request.NumberOfDeliveries}) than drivers ({request.NumberOfDrivers}). Some drivers may have no route.",
+                            "warning");
 
-                    await SendProgressUpdate(hubContext, "GENERATE", "[1. GENERATING DELIVERIES...]", "step-header");
-                    Stopwatch genWatch = new Stopwatch();
-                    genWatch.Start();
-                    List<Delivery> allDeliveries = TspAlgorithm.GenerateRandomDeliveries(request.NumberOfDeliveries, request.MinCoordinate, request.MaxCoordinate);
+                    await Log("GENERATE", "[1. GENERATING DELIVERIES...]", "step-header");
+                    var genWatch = Stopwatch.StartNew();
+                    var allDeliveries = TspAlgorithm.GenerateRandomDeliveries(
+                        request.NumberOfDeliveries, request.MinCoordinate, request.MaxCoordinate);
                     genWatch.Stop();
-                    await SendProgressUpdate(hubContext, "GENERATE", $"✔ {allDeliveries.Count} random deliveries generated successfully.", "success", new { Time = FormatTimeSpan(genWatch.Elapsed) });
-                    await SendProgressUpdate(hubContext, "GENERATE", $"Time elapsed: {FormatTimeSpan(genWatch.Elapsed)}", "detail");
 
+                    await Log("GENERATE", $"✔ {allDeliveries.Count} random deliveries generated.", "success", new { Time = FormatTimeSpan(genWatch.Elapsed) });
+                    await Log("GENERATE", $"Time elapsed: {FormatTimeSpan(genWatch.Elapsed)}", "detail");
 
-                    // --- Run NN and CWS ---
                     nnResultData = await RunOptimizationPath("NN", TspAlgorithm.ConstructNearestNeighborRoute, allDeliveries, request.NumberOfDrivers, hubContext);
                     cwsResultData = await RunOptimizationPath("CWS", TspAlgorithm.ConstructClarkeWrightRoute, allDeliveries, request.NumberOfDrivers, hubContext);
-                    // --- End Run ---
 
-
-                    await SendProgressUpdate(hubContext, "COMPARE", "[3. COMPARISON & FINAL RESULTS]", "step-header");
-
-                    // --- Comparison Logic Updated ---
+                    await Log("COMPARE", "[3. COMPARISON & FINAL RESULTS]", "step-header");
                     if (nnResultData == null || cwsResultData == null)
-                    {
-                         throw new InvalidOperationException("Optimization paths did not complete successfully.");
-                    }
+                        throw new InvalidOperationException("Either NN or CWS path data is null.");
 
                     bool nnBetter = nnResultData.MinMakespan < cwsResultData.MinMakespan;
                     bool tie = Math.Abs(nnResultData.MinMakespan - cwsResultData.MinMakespan) < Constants.Epsilon;
-                    OptimizationResult bestPathResult;
-                    string winnerMethod;
+                    var bestPathResult = tie || nnBetter ? nnResultData : cwsResultData;
+                    var winnerMethod = tie ? "NN / CWS (Tie)" : nnBetter ? "Nearest Neighbor" : "Clarke-Wright Savings";
 
-                    if (tie || nnBetter)
-                    {
-                        bestPathResult = nnResultData;
-                        winnerMethod = tie ? "NN / CWS (Tie)" : "Nearest Neighbor";
-                    }
-                    else
-                    {
-                        bestPathResult = cwsResultData;
-                        winnerMethod = "Clarke-Wright Savings";
-                    }
-                    // --- End Comparison Update ---
+                    await Log("COMPARE", "Comparison of Final Makespan:", "info");
+                    await Log("COMPARE", $"- Nearest Neighbor : {nnResultData.MinMakespan:F2} {Constants.DistanceUnit}", "detail",
+                        new { Time = FormatTimeSpan(TimeSpan.FromMilliseconds(nnResultData.PathExecutionTimeMs)) });
+                    await Log("COMPARE", $"- Clarke-Wright   : {cwsResultData.MinMakespan:F2} {Constants.DistanceUnit}", "detail",
+                        new { Time = FormatTimeSpan(TimeSpan.FromMilliseconds(cwsResultData.PathExecutionTimeMs)) });
+                    await Log("COMPARE", $"✔ Best Result: '{winnerMethod}' -> Makespan: {bestPathResult.MinMakespan:F2} {Constants.DistanceUnit}", "success");
 
-                    await SendProgressUpdate(hubContext, "COMPARE", "Comparison of Final Makespan:", "info");
-                    await SendProgressUpdate(hubContext, "COMPARE", $"- Nearest Neighbor Path : {nnResultData.MinMakespan:F2} {Constants.DistanceUnit}", "detail", new { Time = FormatTimeSpan(TimeSpan.FromMilliseconds(nnResultData.PathExecutionTimeMs)) });
-                    // --- Update CWS message ---
-                    await SendProgressUpdate(hubContext, "COMPARE", $"- Clarke-Wright Path   : {cwsResultData.MinMakespan:F2} {Constants.DistanceUnit}", "detail", new { Time = FormatTimeSpan(TimeSpan.FromMilliseconds(cwsResultData.PathExecutionTimeMs)) });
-                    // --- End Update ---
-                    await SendProgressUpdate(hubContext, "COMPARE", $"✔ Best Result: '{winnerMethod}' -> Makespan: {bestPathResult.MinMakespan:F2} {Constants.DistanceUnit}", "success");
-
-                    // --- Populate Final Result ---
-                    finalCombinedResult = bestPathResult; // Assign the winning path's data
+                    finalCombinedResult = bestPathResult;
                     finalCombinedResult.BestMethod = winnerMethod;
-                    List<Delivery> combinedDeliveries = new List<Delivery> { TspAlgorithm.Depot };
+                    var combinedDeliveries = new List<Delivery> { TspAlgorithm.Depot };
                     combinedDeliveries.AddRange(allDeliveries);
                     finalCombinedResult.GeneratedDeliveries = combinedDeliveries;
                     finalCombinedResult.InitialDistanceNN = nnResultData.InitialDistanceNN;
                     finalCombinedResult.OptimizedDistanceNN = nnResultData.OptimizedDistanceNN;
-                    finalCombinedResult.InitialDistanceCWS = cwsResultData.InitialDistanceCWS;   // Changed from GI
-                    finalCombinedResult.OptimizedDistanceCWS = cwsResultData.OptimizedDistanceCWS; // Changed from GI
-                    finalCombinedResult.PathExecutionTimeMs = bestPathResult.PathExecutionTimeMs; // Store the best path's time
-                    // --- End Populate ---
+                    finalCombinedResult.InitialDistanceCWS = cwsResultData.InitialDistanceCWS;
+                    finalCombinedResult.OptimizedDistanceCWS = cwsResultData.OptimizedDistanceCWS;
+                    finalCombinedResult.PathExecutionTimeMs = bestPathResult.PathExecutionTimeMs;
 
+                    await Log("DETAILS", $"[4. DETAILS OF BEST SOLUTION ({winnerMethod})]", "step-header");
+                    await Log("DETAILS", "Optimized Route Order (Delivery IDs):", "info");
+                    var ids = finalCombinedResult.OptimizedRoute.Any() ? finalCombinedResult.OptimizedRoute.Select(d => d.Id) : Enumerable.Empty<int>();
 
-                    await SendProgressUpdate(hubContext, "DETAILS", $"[4. DETAILS OF BEST SOLUTION ({winnerMethod})]", "step-header");
-                    await SendProgressUpdate(hubContext, "DETAILS", "Optimized Route Order (Delivery IDs):", "info");
-                    IEnumerable<int> ids = finalCombinedResult.OptimizedRoute.Any() ? finalCombinedResult.OptimizedRoute.Select(d => d.Id) : Enumerable.Empty<int>();
                     string routeChain;
                     if (finalCombinedResult.OptimizedRoute.Count > Constants.MaxRouteDisplay + 2)
                     {
-                        routeChain = string.Join(" -> ", ids.Take(Constants.MaxRouteDisplay / 2)) + " ... " + string.Join(" -> ", ids.Skip(finalCombinedResult.OptimizedRoute.Count - Constants.MaxRouteDisplay / 2));
+                        routeChain = string.Join(" -> ", ids.Take(Constants.MaxRouteDisplay / 2))
+                                     + " ... "
+                                     + string.Join(" -> ", ids.Skip(finalCombinedResult.OptimizedRoute.Count - Constants.MaxRouteDisplay / 2));
                     }
-                    else
-                    {
-                        routeChain = string.Join(" -> ", ids);
-                    }
-                    await SendProgressUpdate(hubContext, "DETAILS", routeChain, "detail");
+                    else routeChain = string.Join(" -> ", ids);
+
+                    await Log("DETAILS", routeChain, "detail");
 
                     if (finalCombinedResult.OptimizedRoute.Any())
                     {
-                        finalCombinedResult.DriverRoutes = PopulateDriverRoutes(finalCombinedResult.OptimizedRoute, finalCombinedResult.BestCutIndices, request.NumberOfDrivers);
-
-                        await SendProgressUpdate(hubContext, "DRIVERS", "[DRIVER SUB-ROUTE DETAILS]", "step-header");
-                        foreach (DriverRoute dr in finalCombinedResult.DriverRoutes)
+                        finalCombinedResult.DriverRoutes = PopulateDriverRoutes(
+                            finalCombinedResult.OptimizedRoute,
+                            finalCombinedResult.BestCutIndices,
+                            request.NumberOfDrivers
+                        );
+                        await Log("DRIVERS", "[DRIVER SUB-ROUTE DETAILS]", "step-header");
+                        foreach (var dr in finalCombinedResult.DriverRoutes)
                         {
-                            await SendProgressUpdate(hubContext, "DRIVERS", $"Driver #{dr.DriverId}:", "info");
-                            if (dr.OriginalIndices.Count > 2 && dr.DeliveryIds.Count > 2) // Check if it has actual deliveries
+                            await Log("DRIVERS", $"Driver #{dr.DriverId}:", "info");
+                            if (dr.OriginalIndices.Count > 2 && dr.DeliveryIds.Count > 2)
                             {
                                 int startIdx = dr.OriginalIndices[1];
-                                int endIdx = dr.OriginalIndices[dr.OriginalIndices.Count - 2];
-                                await SendProgressUpdate(hubContext, "DRIVERS", $"- Route Indices : [{startIdx}..{endIdx}]", "detail");
-                                await SendProgressUpdate(hubContext, "DRIVERS", $"- Total Distance: {dr.Distance:F2} {Constants.DistanceUnit}", "detail");
-                                await SendProgressUpdate(hubContext, "DRIVERS", $" Sub-Route IDs : {string.Join(" -> ", dr.DeliveryIds)}", "detail-mono");
+                                int endIdx = dr.OriginalIndices[^2];
+                                await Log("DRIVERS", $"- Route Indices : [{startIdx}..{endIdx}]", "detail");
+                                await Log("DRIVERS", $"- Total Distance: {dr.Distance:F2} {Constants.DistanceUnit}", "detail");
+                                await Log("DRIVERS", $" Sub-Route IDs : {string.Join(" -> ", dr.DeliveryIds)}", "detail-mono");
                             }
                             else
                             {
-                                // Driver has no deliveries (only Depot -> Depot)
-                                await SendProgressUpdate(hubContext, "DRIVERS", "- Route Indices : N/A (No deliveries)", "detail");
-                                await SendProgressUpdate(hubContext, "DRIVERS", $"- Total Distance: {dr.Distance:F2} {Constants.DistanceUnit}", "detail");
-                                await SendProgressUpdate(hubContext, "DRIVERS", $" Sub-Route IDs : {string.Join(" -> ", dr.DeliveryIds)}", "detail-mono");
+                                await Log("DRIVERS", "- Route Indices : N/A (No deliveries)", "detail");
+                                await Log("DRIVERS", $"- Total Distance: {dr.Distance:F2} {Constants.DistanceUnit}", "detail");
+                                await Log("DRIVERS", $" Sub-Route IDs : {string.Join(" -> ", dr.DeliveryIds)}", "detail-mono");
                             }
                         }
                     }
                     else
                     {
-                         finalCombinedResult.DriverRoutes = new List<DriverRoute>();
-                         await SendProgressUpdate(hubContext, "DRIVERS", "[No driver routes generated]", "warning");
+                        finalCombinedResult.DriverRoutes = new();
+                        await Log("DRIVERS", "[No driver routes generated]", "warning");
                     }
-
 
                     overallStopwatch.Stop();
                     finalCombinedResult.TotalExecutionTimeMs = overallStopwatch.Elapsed.TotalMilliseconds;
 
-                    await SendProgressUpdate(hubContext, "SUMMARY", "[FINAL SUMMARY]", "header");
-                    await SendProgressUpdate(hubContext, "SUMMARY", $"Scenario: {request.NumberOfDeliveries} deliveries, {request.NumberOfDrivers} drivers.", "info");
-                    await SendProgressUpdate(hubContext, "SUMMARY", $"Best Makespan ({winnerMethod}): {finalCombinedResult.MinMakespan:F2} {Constants.DistanceUnit}", "result");
-                    await SendProgressUpdate(hubContext, "SUMMARY", $"Total Execution Time: {FormatTimeSpan(overallStopwatch.Elapsed)}", "info");
-
-                    await SendProgressUpdate(hubContext, "END", "✔ Optimization Complete!", "success-large");
+                    await Log("SUMMARY", "[FINAL SUMMARY]", "header");
+                    await Log("SUMMARY", $"Scenario: {request.NumberOfDeliveries} deliveries, {request.NumberOfDrivers} drivers.", "info");
+                    await Log("SUMMARY", $"Best Makespan ({winnerMethod}): {finalCombinedResult.MinMakespan:F2} {Constants.DistanceUnit}", "result");
+                    await Log("SUMMARY", $"Total Execution Time: {FormatTimeSpan(overallStopwatch.Elapsed)}", "info");
+                    await Log("END", "✔ Optimization Complete!", "success-large");
                     return Results.Ok(finalCombinedResult);
                 }
                 catch (ArgumentException argEx)
@@ -256,23 +212,18 @@ namespace RouteOptimizationApi
                     overallStopwatch.Stop();
                     finalCombinedResult.ErrorMessage = argEx.Message;
                     finalCombinedResult.TotalExecutionTimeMs = overallStopwatch.Elapsed.TotalMilliseconds;
-                    await SendProgressUpdate(hubContext, "ERROR", "Input Error: " + argEx.Message, "error");
-                    await SendProgressUpdate(hubContext, "END", "✖ Optimization Failed!", "error-large");
+                    await Log("ERROR", "Input Error: " + argEx.Message, "error");
+                    await Log("END", "✖ Optimization Failed!", "error-large");
                     return Results.BadRequest(finalCombinedResult);
                 }
                 catch (Exception ex)
                 {
                     overallStopwatch.Stop();
-                    Console.WriteLine($"Error during optimization: {ex.Message}{Environment.NewLine}Stack Trace: {ex.StackTrace}");
-                    finalCombinedResult.ErrorMessage = app.Environment.IsDevelopment() ? ex.ToString() : "An unexpected error occurred during optimization.";
+                    finalCombinedResult.ErrorMessage = app.Environment.IsDevelopment() ? ex.ToString() : "An unexpected error occurred.";
                     finalCombinedResult.TotalExecutionTimeMs = overallStopwatch.Elapsed.TotalMilliseconds;
-                    await SendProgressUpdate(hubContext, "ERROR", "Internal Server Error: " + finalCombinedResult.ErrorMessage, "error");
-                    await SendProgressUpdate(hubContext, "END", "✖ Optimization Failed!", "error-large");
-                    return Results.Problem(
-                        detail: finalCombinedResult.ErrorMessage,
-                        statusCode: StatusCodes.Status500InternalServerError,
-                        title: "Optimization Failed"
-                    );
+                    await Log("ERROR", "Internal Server Error: " + finalCombinedResult.ErrorMessage, "error");
+                    await Log("END", "✖ Optimization Failed!", "error-large");
+                    return Results.Problem(detail: finalCombinedResult.ErrorMessage, statusCode: 500, title: "Optimization Failed");
                 }
             })
             .WithName("OptimizeRoutes")
@@ -284,93 +235,63 @@ namespace RouteOptimizationApi
             await app.RunAsync();
         }
 
-
-        static async Task SendProgressUpdate(
-            IHubContext<OptimizationHub> hubContext,
-            string step,
-            string message,
-            string style,
-            object? data = null,
-            bool clearPrevious = false
-            )
-        {
-            await hubContext.Clients.All.SendAsync("ReceiveMessage", new ProgressUpdate
-            {
-                Step = step,
-                Message = message,
-                Style = style,
-                Data = data,
-                ClearPreviousProgress = clearPrevious
-            });
-        }
-
-        // --- RunOptimizationPath modified ---
         static async Task<OptimizationResult> RunOptimizationPath(
-            string tag, // "NN" or "CWS"
+            string tag,
             Func<List<Delivery>, List<Delivery>> routeBuilder,
             List<Delivery> allDeliveries,
             int numberOfDrivers,
             IHubContext<OptimizationHub> hubContext
-            )
+        )
         {
-            OptimizationResult pathResult = new OptimizationResult();
-            Stopwatch totalPathWatch = new Stopwatch();
-            totalPathWatch.Start();
+            var pathResult = new OptimizationResult();
+            var totalPathWatch = Stopwatch.StartNew();
 
-            string fullMethodName;
-            switch(tag) {
-                case "NN": fullMethodName = "Nearest Neighbor"; break;
-                case "CWS": fullMethodName = "Clarke-Wright Savings"; break;
-                default: fullMethodName = "Unknown Method"; break;
+            string fullMethodName = tag == "NN" ? "Nearest Neighbor" : "Clarke-Wright Savings";
+            async Task Log(string step, string msg, string style, object? data = null, bool clear = false)
+            {
+                await hubContext.Clients.All.SendAsync("ReceiveMessage", new ProgressUpdate(step, msg, style, data, clear));
             }
 
-            await SendProgressUpdate(hubContext, tag, $"===== PATH {tag}: {fullMethodName} =====", "header");
+            await Log(tag, $"===== PATH {tag}: {fullMethodName} =====", "header");
 
-            // --- 1. Build Initial Route ---
-            Stopwatch buildSw = new Stopwatch();
-            buildSw.Start();
-            List<Delivery> initialRoute = routeBuilder(allDeliveries);
+            var buildSw = Stopwatch.StartNew();
+            var initialRoute = routeBuilder(allDeliveries);
             buildSw.Stop();
+
             double initialDist = TspAlgorithm.ComputeTotalRouteDistance(initialRoute);
+            if (tag == "NN") pathResult.InitialDistanceNN = initialDist; else pathResult.InitialDistanceCWS = initialDist;
 
-            // Store initial distance in the correct field based on tag
-            if (tag == "NN") pathResult.InitialDistanceNN = initialDist;
-            else if (tag == "CWS") pathResult.InitialDistanceCWS = initialDist;
+            await Log(tag + ".1", $"✔ {tag} initial TSP route constructed.", "success", new { Time = FormatTimeSpan(buildSw.Elapsed) });
+            await Log(tag + ".1", $"* {tag} Initial Route Distance: {initialDist:F2} {Constants.DistanceUnit}", "detail");
 
-            await SendProgressUpdate(hubContext, tag + ".1", $"✔ {tag} initial TSP route constructed.", "success", new { Time = FormatTimeSpan(buildSw.Elapsed) });
-            await SendProgressUpdate(hubContext, tag + ".1", $"* {tag} Initial Route Distance: {initialDist:F2} {Constants.DistanceUnit}", "detail");
-
-            // --- 2. Optimize Route ---
-            Stopwatch optSw = new Stopwatch();
-            optSw.Start();
-            await SendProgressUpdate(hubContext, tag + ".2", $"[{tag}.2 Optimizing Route (2-Opt)...]", "step");
-            List<Delivery> optimizedRoute = TspAlgorithm.OptimizeRouteUsing2Opt(initialRoute);
+            var optSw = Stopwatch.StartNew();
+            await Log(tag + ".2", $"[{tag}.2 Optimizing Route (2-Opt)...]", "step");
+            var optimizedRoute = TspAlgorithm.OptimizeRouteUsing2Opt(initialRoute);
             optSw.Stop();
-            double optimizedDist = TspAlgorithm.ComputeTotalRouteDistance(optimizedRoute);
 
-            // Store optimized distance in the correct field based on tag
-            if (tag == "NN") pathResult.OptimizedDistanceNN = optimizedDist;
-            else if (tag == "CWS") pathResult.OptimizedDistanceCWS = optimizedDist;
+            double optimizedDist = TspAlgorithm.ComputeTotalRouteDistance(optimizedRoute);
+            if (tag == "NN") pathResult.OptimizedDistanceNN = optimizedDist; else pathResult.OptimizedDistanceCWS = optimizedDist;
 
             double improvement = initialDist - optimizedDist;
-            double percent = initialDist > Constants.Epsilon ? (improvement / initialDist * 100.0) : 0;
-            await SendProgressUpdate(hubContext, tag + ".2", $"✔ {tag} route optimized.", "success", new { Time = FormatTimeSpan(optSw.Elapsed) });
-            await SendProgressUpdate(hubContext, tag + ".2", $"* {tag} Optimized Route Distance: {optimizedDist:F2} {Constants.DistanceUnit}", "detail");
-            await SendProgressUpdate(hubContext, tag + ".2", $"* Improvement Achieved: {improvement:F2} {Constants.DistanceUnit} ({percent:F2}%)", "detail");
-            pathResult.OptimizedRoute = optimizedRoute; // Store the optimized route itself
+            double percent = initialDist > Constants.Epsilon ? (improvement / initialDist) * 100.0 : 0;
 
-            // --- 3. Partition Route ---
-            Stopwatch partSw = new Stopwatch();
-            partSw.Start();
-            await SendProgressUpdate(hubContext, tag + ".3", $"[{tag}.3 Partitioning for {numberOfDrivers} Drivers (Binary Search)...]", "step");
+            await Log(tag + ".2", $"✔ {tag} route optimized.", "success", new { Time = FormatTimeSpan(optSw.Elapsed) });
+            await Log(tag + ".2", $"* {tag} Optimized Route Distance: {optimizedDist:F2} {Constants.DistanceUnit}", "detail");
+            await Log(tag + ".2", $"* Improvement Achieved: {improvement:F2} ({percent:F2}%)", "detail");
+
+            pathResult.OptimizedRoute = optimizedRoute;
+
+            var partSw = Stopwatch.StartNew();
+            await Log(tag + ".3", $"[{tag}.3 Partitioning for {numberOfDrivers} Drivers (Binary Search)...]", "step");
             long iterations = 0;
-            Stopwatch progressReportSw = Stopwatch.StartNew();
+            var progressReportSw = Stopwatch.StartNew();
+
             TspAlgorithm.ProgressReporter progressCallback = count =>
             {
                 iterations = count;
-                if (!progressReportSw.IsRunning || progressReportSw.ElapsedMilliseconds > Constants.ProgressReportIntervalMs)
+                if (progressReportSw.ElapsedMilliseconds > Constants.ProgressReportIntervalMs)
                 {
-                    _ = SendProgressUpdate(hubContext, tag + ".3", $"Partitioning (Binary Search Iteration: {iterations})...", "progress", null, true);
+                    _ = Log(tag + ".3", $"Partitioning (Binary Search Iteration: {iterations})...", "progress", null, true);
                     progressReportSw.Restart();
                 }
             };
@@ -382,148 +303,111 @@ namespace RouteOptimizationApi
                 out int[]? bestCuts,
                 out double minMakespan
             );
+
             partSw.Stop();
-            await SendProgressUpdate(hubContext, tag + ".3", $"Partitioning complete after {iterations} binary search iterations.", "progress", null, true);
+            await Log(tag + ".3", $"Partitioning complete after {iterations} iterations.", "progress", null, true);
 
             pathResult.BestCutIndices = bestCuts ?? Array.Empty<int>();
             pathResult.MinMakespan = minMakespan;
 
-            await SendProgressUpdate(hubContext, tag + ".3", $"✔ Optimal partitioning for {tag} route found.", "success", new { Time = FormatTimeSpan(partSw.Elapsed) });
-            await SendProgressUpdate(hubContext, tag + ".3", $"* Optimal Cut Indices: [{string.Join(", ", pathResult.BestCutIndices)}]", "detail");
-            await SendProgressUpdate(hubContext, tag + ".3", $"* Minimum Makespan Achieved ({tag}): {minMakespan:F2} {Constants.DistanceUnit}", "result");
+            await Log(tag + ".3", $"✔ Optimal partitioning for {tag} route found.", "success", new { Time = FormatTimeSpan(partSw.Elapsed) });
+            await Log(tag + ".3", $"* Optimal Cut Indices: [{string.Join(", ", pathResult.BestCutIndices)}]", "detail");
+            await Log(tag + ".3", $"* Minimum Makespan: {minMakespan:F2} {Constants.DistanceUnit}", "result");
 
-            // --- Finish Path ---
             totalPathWatch.Stop();
             pathResult.PathExecutionTimeMs = totalPathWatch.Elapsed.TotalMilliseconds;
-            await SendProgressUpdate(hubContext, tag, $"Total time for {tag} path: {FormatTimeSpan(totalPathWatch.Elapsed)}", "info");
+            await Log(tag, $"Total time for {tag} path: {FormatTimeSpan(totalPathWatch.Elapsed)}", "info");
+
             return pathResult;
         }
-        // --- End of RunOptimizationPath modification ---
-
-
         static List<DriverRoute> PopulateDriverRoutes(List<Delivery> optimizedRoute, int[] cutIndices, int driverCount)
         {
-            List<DriverRoute> driverRoutes = new List<DriverRoute>();
-            // Check for null or route too short (only Depot -> Depot)
+            var driverRoutes = new List<DriverRoute>();
             if (optimizedRoute == null || optimizedRoute.Count < 2) return driverRoutes;
-
-            int deliveryCountInRoute = optimizedRoute.Count - 2; // Number of actual deliveries (excluding depots)
-            int[] effectiveCuts = cutIndices ?? Array.Empty<int>();
-
-            // Handle case where there are no deliveries
+            int deliveryCountInRoute = optimizedRoute.Count - 2;
             if (deliveryCountInRoute <= 0)
             {
                 for (int d = 1; d <= driverCount; d++)
                 {
-                    DriverRoute emptyDriverRoute = new DriverRoute { DriverId = d };
-                    emptyDriverRoute.RoutePoints.Add(TspAlgorithm.Depot);
-                    emptyDriverRoute.DeliveryIds.Add(TspAlgorithm.Depot.Id);
-                    emptyDriverRoute.OriginalIndices.Add(0);
-                    emptyDriverRoute.RoutePoints.Add(TspAlgorithm.Depot);
-                    emptyDriverRoute.DeliveryIds.Add(TspAlgorithm.Depot.Id);
-                    emptyDriverRoute.OriginalIndices.Add(optimizedRoute.Count > 0 ? optimizedRoute.Count - 1 : 0); // Use actual last index if available
-                    emptyDriverRoute.Distance = 0;
-                    driverRoutes.Add(emptyDriverRoute);
+                    var empty = new DriverRoute { DriverId = d };
+                    empty.RoutePoints.Add(TspAlgorithm.Depot);
+                    empty.DeliveryIds.Add(TspAlgorithm.Depot.Id);
+                    empty.OriginalIndices.Add(0);
+                    empty.RoutePoints.Add(TspAlgorithm.Depot);
+                    empty.DeliveryIds.Add(TspAlgorithm.Depot.Id);
+                    empty.OriginalIndices.Add(optimizedRoute.Count > 0 ? optimizedRoute.Count - 1 : 0);
+                    driverRoutes.Add(empty);
                 }
                 return driverRoutes;
             }
-
-            int currentDeliveryRouteIndex = 0; // Tracks the index of the *last* delivery assigned
+            var effectiveCuts = cutIndices ?? Array.Empty<int>();
+            int currentIndex = 0;
             for (int d = 1; d <= driverCount; d++)
             {
-                DriverRoute driverRoute = new DriverRoute { DriverId = d };
-                // Start index in the *optimizedRoute* list (1-based for deliveries)
-                int routeStartIndex = currentDeliveryRouteIndex + 1;
-                // End index in the *optimizedRoute* list (1-based for deliveries)
-                // If this is the last driver, they get all remaining deliveries up to deliveryCountInRoute
-                // Otherwise, use the cut index. Cut indices are 1-based relative to deliveries.
-                int routeEndIndex = (d - 1) < effectiveCuts.Length ? effectiveCuts[d - 1] : deliveryCountInRoute;
+                var dr = new DriverRoute { DriverId = d };
+                int routeStart = currentIndex + 1;
+                int routeEnd = (d - 1) < effectiveCuts.Length ? effectiveCuts[d - 1] : deliveryCountInRoute;
 
-                // Ensure indices are valid and there are deliveries to assign
-                bool routeHasDeliveries = routeStartIndex <= routeEndIndex &&
-                                          routeStartIndex >= 1 && // Must start at or after the first delivery
-                                          routeEndIndex <= deliveryCountInRoute; // Must end at or before the last delivery
+                dr.RoutePoints.Add(TspAlgorithm.Depot);
+                dr.DeliveryIds.Add(TspAlgorithm.Depot.Id);
+                dr.OriginalIndices.Add(0);
 
-                // Always start at the depot
-                driverRoute.RoutePoints.Add(TspAlgorithm.Depot);
-                driverRoute.DeliveryIds.Add(TspAlgorithm.Depot.Id);
-                driverRoute.OriginalIndices.Add(0);
-
-                if (routeHasDeliveries)
+                bool hasDeliveries = routeStart <= routeEnd && routeStart >= 1 && routeEnd <= deliveryCountInRoute;
+                if (hasDeliveries)
                 {
-                    for (int i = routeStartIndex; i <= routeEndIndex; i++)
+                    for (int i = routeStart; i <= routeEnd; i++)
                     {
-                        // Indices i here correspond to the optimizedRoute list (Depot is 0, first delivery is 1, etc.)
-                        if (i > 0 && i < optimizedRoute.Count - 1) // Check bounds carefully
+                        if (i > 0 && i < optimizedRoute.Count - 1)
                         {
-                            driverRoute.RoutePoints.Add(optimizedRoute[i]);
-                            driverRoute.DeliveryIds.Add(optimizedRoute[i].Id);
-                            driverRoute.OriginalIndices.Add(i);
-                        }
-                        else
-                        {
-                             Console.WriteLine($"Warning: Invalid index {i} accessed during driver route population (Start: {routeStartIndex}, End: {routeEndIndex}, RouteCount: {optimizedRoute.Count})");
+                            dr.RoutePoints.Add(optimizedRoute[i]);
+                            dr.DeliveryIds.Add(optimizedRoute[i].Id);
+                            dr.OriginalIndices.Add(i);
                         }
                     }
                 }
+                dr.RoutePoints.Add(TspAlgorithm.Depot);
+                dr.DeliveryIds.Add(TspAlgorithm.Depot.Id);
+                dr.OriginalIndices.Add(optimizedRoute.Count - 1);
 
-                // Always end at the depot
-                driverRoute.RoutePoints.Add(TspAlgorithm.Depot);
-                driverRoute.DeliveryIds.Add(TspAlgorithm.Depot.Id);
-                driverRoute.OriginalIndices.Add(optimizedRoute.Count - 1); // Last element is always the depot
-
-                // Calculate distance for this sub-route (Depot -> deliveries -> Depot)
-                driverRoute.Distance = TspAlgorithm.ComputeSubRouteDistanceWithDepot(optimizedRoute, routeStartIndex, routeEndIndex);
-
-                driverRoutes.Add(driverRoute);
-                currentDeliveryRouteIndex = routeEndIndex; // Update the last assigned delivery index
-
-                // If all deliveries are assigned and there are still drivers left, create empty routes for them
-                if (currentDeliveryRouteIndex >= deliveryCountInRoute && d < driverCount)
+                dr.Distance = TspAlgorithm.ComputeSubRouteDistanceWithDepot(optimizedRoute, routeStart, routeEnd);
+                driverRoutes.Add(dr);
+                currentIndex = routeEnd;
+                if (currentIndex >= deliveryCountInRoute && d < driverCount)
                 {
-                   for(int remainingDriverId = d + 1; remainingDriverId <= driverCount; remainingDriverId++)
-                   {
-                        DriverRoute emptyDriverRoute = new DriverRoute { DriverId = remainingDriverId };
-                        emptyDriverRoute.RoutePoints.Add(TspAlgorithm.Depot);
-                        emptyDriverRoute.DeliveryIds.Add(TspAlgorithm.Depot.Id);
-                        emptyDriverRoute.OriginalIndices.Add(0);
-                        emptyDriverRoute.RoutePoints.Add(TspAlgorithm.Depot);
-                        emptyDriverRoute.DeliveryIds.Add(TspAlgorithm.Depot.Id);
-                        emptyDriverRoute.OriginalIndices.Add(optimizedRoute.Count - 1);
-                        emptyDriverRoute.Distance = 0;
-                        driverRoutes.Add(emptyDriverRoute);
-                   }
-                   break; // Exit the main loop as all deliveries are assigned
+                    for (int r = d + 1; r <= driverCount; r++)
+                    {
+                        var empty = new DriverRoute { DriverId = r };
+                        empty.RoutePoints.Add(TspAlgorithm.Depot);
+                        empty.DeliveryIds.Add(TspAlgorithm.Depot.Id);
+                        empty.OriginalIndices.Add(0);
+                        empty.RoutePoints.Add(TspAlgorithm.Depot);
+                        empty.DeliveryIds.Add(TspAlgorithm.Depot.Id);
+                        empty.OriginalIndices.Add(optimizedRoute.Count - 1);
+                        driverRoutes.Add(empty);
+                    }
+                    break;
                 }
             }
-
-            // Ensure we always return exactly `driverCount` routes, even if some are empty
-             while (driverRoutes.Count < driverCount)
-             {
-                 int nextDriverId = driverRoutes.Count + 1;
-                 DriverRoute emptyDriverRoute = new DriverRoute { DriverId = nextDriverId };
-                 emptyDriverRoute.RoutePoints.Add(TspAlgorithm.Depot);
-                 emptyDriverRoute.DeliveryIds.Add(TspAlgorithm.Depot.Id);
-                 emptyDriverRoute.OriginalIndices.Add(0);
-                 emptyDriverRoute.RoutePoints.Add(TspAlgorithm.Depot);
-                 emptyDriverRoute.DeliveryIds.Add(TspAlgorithm.Depot.Id);
-                 emptyDriverRoute.OriginalIndices.Add(optimizedRoute.Count > 0 ? optimizedRoute.Count - 1 : 0);
-                 emptyDriverRoute.Distance = 0;
-                 driverRoutes.Add(emptyDriverRoute);
-             }
-
-
+            while (driverRoutes.Count < driverCount)
+            {
+                var empty = new DriverRoute { DriverId = driverRoutes.Count + 1 };
+                empty.RoutePoints.Add(TspAlgorithm.Depot);
+                empty.DeliveryIds.Add(TspAlgorithm.Depot.Id);
+                empty.OriginalIndices.Add(0);
+                empty.RoutePoints.Add(TspAlgorithm.Depot);
+                empty.DeliveryIds.Add(TspAlgorithm.Depot.Id);
+                empty.OriginalIndices.Add(optimizedRoute.Count - 1);
+                driverRoutes.Add(empty);
+            }
             return driverRoutes;
         }
-
-
         public static string FormatTimeSpan(TimeSpan span)
         {
-            double timeInMs = span.TotalMilliseconds;
-            if (timeInMs >= 1000) return (timeInMs / 1000.0).ToString("F3") + " sec";
-            if (timeInMs < 1.0 && timeInMs > 0) return (timeInMs * 1000.0).ToString("F0") + " µs";
-            if (timeInMs == 0) return "0 ms";
-            return timeInMs.ToString("F2") + " ms";
+            double ms = span.TotalMilliseconds;
+            if (ms >= 1000) return (ms / 1000.0).ToString("F3") + " sec";
+            if (ms < 1.0 && ms > 0) return (ms * 1000.0).ToString("F0") + " µs";
+            if (ms == 0) return "0 ms";
+            return ms.ToString("F2") + " ms";
         }
     }
 }
