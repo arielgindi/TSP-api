@@ -31,4 +31,22 @@ namespace RouteOptimizationApi.Models
         public double OptimizeTimeMs { get; set; }
         public double PartitionTimeMs { get; set; }
     }
+
+
+    public class AlgorithmBenchmark {
+        public string HeuristicName { get; set; } = string.Empty; 
+
+        public double InitialRouteBuildTimeMs { get; set; }
+        public double RouteOptimizationTimeMs { get; set; }
+        public double RoutePartitioningTimeMs { get; set; }
+        public double PartitioningTimeMs { get; set; }
+
+        public double InitialRouteDistance { get; set; }
+        public double OptimizedRouteDistance { get; set; }
+
+        public double ImprovementPercentage { get; set; }
+        
+        public double Makespan { get; set; }
+
+    }
 }
