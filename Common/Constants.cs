@@ -1,4 +1,4 @@
-namespace RouteOptimizationApi
+namespace RouteOptimizationApi.Common
 {
     public static class Constants
     {

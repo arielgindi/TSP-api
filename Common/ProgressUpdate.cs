@@ -1,10 +1,10 @@
-namespace RouteOptimizationApi
+namespace RouteOptimizationApi.Common
 {
     public record ProgressUpdate(
-        string? Step,
+        string Step,
         string Message,
         string Style,
-        object? Data,
+        object Data,
         bool ClearPreviousProgress = false
     );
 }
