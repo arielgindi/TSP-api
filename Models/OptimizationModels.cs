@@ -26,5 +26,9 @@ namespace RouteOptimizationApi.Models
         public string ErrorMessage { get; set; } = string.Empty;
         public double TotalExecutionTimeMs { get; set; }
         public double PathExecutionTimeMs { get; set; }
+        public double GenerationTimeMs { get; set; }
+        public double BuildTimeMs { get; set; }
+        public double OptimizeTimeMs { get; set; }
+        public double PartitionTimeMs { get; set; }
     }
 }

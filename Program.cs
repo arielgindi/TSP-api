@@ -46,13 +46,13 @@ namespace RouteOptimizationApi
             app.MapPost("/api/optimize", async (OptimizationRequest request, IHostApplicationLifetime lifetime, IHubContext<OptimizationHub> hubContext) =>
             {
                 Stopwatch overallStopwatch = Stopwatch.StartNew();
-                OptimizationResult nnResultData = null;
-                OptimizationResult cwsResultData = null;
+                OptimizationResult? nnResultData = null;
+                OptimizationResult? cwsResultData = null;
                 OptimizationResult finalCombinedResult = new OptimizationResult();
 
-                async Task Log(string step, string msg, string style, object data = null, bool clear = false)
+                async Task Log(string step, string msg, string style, object? data = null, bool clear = false)
                 {
-                    await hubContext.Clients.All.SendAsync("ReceiveMessage", new ProgressUpdate(step, msg, style, data, clear));
+                    await hubContext.Clients.All.SendAsync("ReceiveMessage", new ProgressUpdate(step, msg, style, data ?? new { }, clear));
                 }
 
                 try
@@ -76,12 +76,15 @@ namespace RouteOptimizationApi
                     Stopwatch genWatch = Stopwatch.StartNew();
                     List<Delivery> allDeliveries = TspAlgorithm.GenerateRandomDeliveries(request.NumberOfDeliveries, request.MinCoordinate, request.MaxCoordinate);
                     genWatch.Stop();
+                    double generationMs = genWatch.Elapsed.TotalMilliseconds;
 
                     await Log("GENERATE", "✔ " + allDeliveries.Count + " random deliveries generated.", "success", new { Time = FormatTimeSpan(genWatch.Elapsed) });
                     await Log("GENERATE", "Time elapsed: " + FormatTimeSpan(genWatch.Elapsed), "detail");
 
                     nnResultData = await RunOptimizationPath("NN", TspAlgorithm.ConstructNearestNeighborRoute, allDeliveries, request.NumberOfDrivers, hubContext);
+                    if (nnResultData != null) nnResultData.GenerationTimeMs = generationMs;
                     cwsResultData = await RunOptimizationPath("CWS", TspAlgorithm.ConstructClarkeWrightRoute, allDeliveries, request.NumberOfDrivers, hubContext);
+                    if (cwsResultData != null) cwsResultData.GenerationTimeMs = generationMs;
 
                     await Log("COMPARE", "[3. COMPARISON & FINAL RESULTS]", "step-header");
 
@@ -205,9 +208,9 @@ namespace RouteOptimizationApi
             Stopwatch totalPathWatch = Stopwatch.StartNew();
             string fullMethodName = tag == "NN" ? "Nearest Neighbor" : "Clarke-Wright Savings";
 
-            async Task Log(string step, string msg, string style, object data = null, bool clear = false)
+            async Task Log(string step, string msg, string style, object? data = null, bool clear = false)
             {
-                await hubContext.Clients.All.SendAsync("ReceiveMessage", new ProgressUpdate(step, msg, style, data, clear));
+                await hubContext.Clients.All.SendAsync("ReceiveMessage", new ProgressUpdate(step, msg, style, data ?? new { }, clear));
             }
 
             await Log(tag, "===== PATH " + tag + ": " + fullMethodName + " =====", "header");
@@ -215,6 +218,7 @@ namespace RouteOptimizationApi
             Stopwatch buildSw = Stopwatch.StartNew();
             List<Delivery> initialRoute = routeBuilder(allDeliveries);
             buildSw.Stop();
+            pathResult.BuildTimeMs = buildSw.Elapsed.TotalMilliseconds;
 
             double initialDist = TspAlgorithm.ComputeTotalRouteDistance(initialRoute);
             if (tag == "NN") pathResult.InitialDistanceNN = initialDist; else pathResult.InitialDistanceCWS = initialDist;
@@ -226,6 +230,7 @@ namespace RouteOptimizationApi
             await Log(tag + ".2", "[" + tag + ".2 Optimizing Route (2-Opt)...]", "step");
             List<Delivery> optimizedRoute = TspAlgorithm.OptimizeRouteUsing2Opt(initialRoute);
             optSw.Stop();
+            pathResult.OptimizeTimeMs = optSw.Elapsed.TotalMilliseconds;
 
             double optimizedDist = TspAlgorithm.ComputeTotalRouteDistance(optimizedRoute);
             if (tag == "NN") pathResult.OptimizedDistanceNN = optimizedDist; else pathResult.OptimizedDistanceCWS = optimizedDist;
@@ -254,11 +259,12 @@ namespace RouteOptimizationApi
             };
 
             TspAlgorithm.FindBestPartitionBinarySearch(optimizedRoute, numberOfDrivers, progressCallback, out int[] bestCuts, out double minMakespan);
-
             partSw.Stop();
+            pathResult.PartitionTimeMs = partSw.Elapsed.TotalMilliseconds;
+
             await Log(tag + ".3", "Partitioning complete after " + iterations + " iterations.", "progress", null, true);
 
-            pathResult.BestCutIndices = bestCuts ?? Array.Empty<int>();
+            pathResult.BestCutIndices = bestCuts;
             pathResult.MinMakespan = minMakespan;
 
             await Log(tag + ".3", "✔ Optimal partitioning for " + tag + " route found.", "success", new { Time = FormatTimeSpan(partSw.Elapsed) });

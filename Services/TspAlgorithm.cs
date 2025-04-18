@@ -54,7 +54,7 @@ namespace RouteOptimizationApi.Services
             while (pending.Count > 0)
             {
                 double bestDistSq = double.MaxValue;
-                Delivery next = null;
+                Delivery? next = null;
                 int nextIdx = -1;
                 for (int i = 0; i < pending.Count; i++)
                 {
@@ -65,7 +65,7 @@ namespace RouteOptimizationApi.Services
                         next = pending[i];
                         nextIdx = i;
                     }
-                    else if (Math.Abs(distSq - bestDistSq) < Constants.Epsilon && pending[i].Id < (next == null ? int.MaxValue : next.Id))
+                    else if (Math.Abs(distSq - bestDistSq) < Constants.Epsilon && pending[i].Id < (next?.Id ?? int.MaxValue))
                     {
                         next = pending[i];
                         nextIdx = i;
@@ -177,9 +177,9 @@ namespace RouteOptimizationApi.Services
             List<Delivery> finalRoute = new List<Delivery> { Depot };
             if (representativeToRoute.Count > 1)
             {
-                foreach (List<int> kvp in representativeToRoute.Values)
+                foreach (List<int> group in representativeToRoute.Values)
                 {
-                    foreach (int dId in kvp)
+                    foreach (int dId in group)
                     {
                         finalRoute.Add(allDeliveries.First(d => d.Id == dId));
                     }
@@ -245,18 +245,17 @@ namespace RouteOptimizationApi.Services
         public static void FindBestPartitionBinarySearch(
             List<Delivery> optimizedRoute,
             int numberOfDrivers,
-            ProgressReporter reporter,
+            ProgressReporter? reporter,
             out int[] bestCuts,
             out double minMakespan
         )
         {
             minMakespan = double.MaxValue;
-            bestCuts = null;
+            bestCuts = Array.Empty<int>();
             long iterations = 0;
             if (optimizedRoute == null || optimizedRoute.Count < 2)
             {
                 minMakespan = 0;
-                bestCuts = Array.Empty<int>();
                 reporter?.Invoke(iterations);
                 return;
             }
@@ -264,21 +263,18 @@ namespace RouteOptimizationApi.Services
             if (deliveryCount <= 0)
             {
                 minMakespan = 0;
-                bestCuts = Array.Empty<int>();
                 reporter?.Invoke(iterations);
                 return;
             }
             if (numberOfDrivers <= 0)
             {
                 minMakespan = ComputeTotalRouteDistance(optimizedRoute);
-                bestCuts = Array.Empty<int>();
                 reporter?.Invoke(iterations);
                 return;
             }
             if (numberOfDrivers == 1)
             {
                 minMakespan = ComputeSubRouteDistanceWithDepot(optimizedRoute, 1, deliveryCount);
-                bestCuts = Array.Empty<int>();
                 reporter?.Invoke(iterations);
                 return;
             }
@@ -307,7 +303,7 @@ namespace RouteOptimizationApi.Services
             }
             double upperBound = ComputeTotalRouteDistance(optimizedRoute);
             double optimal = upperBound;
-            int[] currentBestCuts = null;
+            int[] currentBestCuts = Array.Empty<int>();
             int maxBinIters = (int)Math.Log2(upperBound / Constants.Epsilon) + deliveryCount + 100;
 
             while (lowerBound <= upperBound && iterations < maxBinIters)
@@ -327,10 +323,12 @@ namespace RouteOptimizationApi.Services
                 reporter?.Invoke(iterations);
             }
             minMakespan = optimal;
-            if (currentBestCuts == null)
+            if (currentBestCuts.Length == 0)
             {
-                IsPartitionFeasible(optimizedRoute, numberOfDrivers, minMakespan, out currentBestCuts);
-                if (currentBestCuts == null) currentBestCuts = Array.Empty<int>();
+                if (!IsPartitionFeasible(optimizedRoute, numberOfDrivers, minMakespan, out currentBestCuts))
+                {
+                    currentBestCuts = Array.Empty<int>();
+                }
             }
             bestCuts = currentBestCuts;
             if (bestCuts.Length < numberOfDrivers - 1 && deliveryCount > 0)
@@ -344,12 +342,8 @@ namespace RouteOptimizationApi.Services
 
         static bool IsPartitionFeasible(List<Delivery> route, int maxDrivers, double maxAllowedMakespan, out int[] cuts)
         {
-            cuts = null;
-            if (route == null || route.Count < 2)
-            {
-                cuts = Array.Empty<int>();
-                return true;
-            }
+            cuts = Array.Empty<int>();
+            if (route == null || route.Count < 2) return true;
             int n = route.Count - 2;
             int driversUsed = 1;
             int start = 1;

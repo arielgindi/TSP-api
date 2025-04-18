@@ -4,7 +4,7 @@ namespace RouteOptimizationApi.Common
         string Step,
         string Message,
         string Style,
-        object Data,
+        object? Data,
         bool ClearPreviousProgress = false
     );
 }
