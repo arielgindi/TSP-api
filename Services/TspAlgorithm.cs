@@ -6,34 +6,50 @@ using RouteOptimizationApi.Models;
 
 namespace RouteOptimizationApi.Services
 {
-    public static class TspAlgorithm
+    /// <summary>
+    /// Provides various TSP-related tasks such as generating deliveries, 2-Opt optimization, and route partitioning.
+    /// This is the main partial class file containing common methods shared across TSP operations.
+    /// </summary>
+    public static partial class TspAlgorithm
     {
         private static readonly Random randomGenerator = new Random();
+
+        /// <summary>
+        /// Special delivery that represents the depot (start/end point).
+        /// </summary>
         public static readonly Delivery Depot = new Delivery(0, 0, 0);
+
+        /// <summary>
+        /// Used to report progress when searching for the best route partition.
+        /// </summary>
         public delegate void ProgressReporter(long itemsProcessed);
 
-        private record Saving(int DeliveryIdI, int DeliveryIdJ, double Value);
+        private record Saving(int FirstDeliveryId, int SecondDeliveryId, double Value);
 
+        /// <summary>
+        /// Generates a list of random deliveries within a specified coordinate range, ensuring no duplicates.
+        /// </summary>
         public static List<Delivery> GenerateRandomDeliveries(int count, int minCoord, int maxCoord)
         {
             if (count <= 0) return new List<Delivery>();
+
             List<Delivery> deliveries = new List<Delivery>(count);
-            HashSet<(int, int)> usedCoords = new HashSet<(int, int)> { (Depot.X, Depot.Y) };
+            HashSet<(int, int)> usedCoordinates = new HashSet<(int, int)> { (Depot.X, Depot.Y) };
             long availableSlots = ((long)maxCoord - minCoord + 1) * ((long)maxCoord - minCoord + 1) - 1;
             if (count > availableSlots) count = (int)Math.Max(0, availableSlots);
 
-            for (int i = 1; i <= count; i++)
+            for (int deliveryIndex = 1; deliveryIndex <= count; deliveryIndex++)
             {
                 int attempts = 0;
                 while (true)
                 {
-                    int rx = randomGenerator.Next(minCoord, maxCoord + 1);
-                    int ry = randomGenerator.Next(minCoord, maxCoord + 1);
+                    int randomX = randomGenerator.Next(minCoord, maxCoord + 1);
+                    int randomY = randomGenerator.Next(minCoord, maxCoord + 1);
                     attempts++;
                     if (attempts > Constants.MaxAttempts) return deliveries;
-                    if (usedCoords.Add((rx, ry)))
+                    if (usedCoordinates.Add((randomX, randomY)))
                     {
-                        deliveries.Add(new Delivery(i, rx, ry));
+                        deliveries.Add(new Delivery(deliveryIndex, randomX, randomY));
                         break;
                     }
                 }
@@ -41,187 +57,45 @@ namespace RouteOptimizationApi.Services
             return deliveries;
         }
 
-        public static List<Delivery> ConstructNearestNeighborRoute(List<Delivery> allDeliveries)
-        {
-            List<Delivery> pending = new List<Delivery>(allDeliveries ?? Enumerable.Empty<Delivery>());
-            List<Delivery> route = new List<Delivery> { Depot };
-            Delivery current = Depot;
-            if (!pending.Any())
-            {
-                route.Add(Depot);
-                return route;
-            }
-            while (pending.Count > 0)
-            {
-                double bestDistSq = double.MaxValue;
-                Delivery? next = null;
-                int nextIdx = -1;
-                for (int i = 0; i < pending.Count; i++)
-                {
-                    double distSq = CalculateEuclideanDistanceSquared(current, pending[i]);
-                    if (distSq < bestDistSq - Constants.Epsilon)
-                    {
-                        bestDistSq = distSq;
-                        next = pending[i];
-                        nextIdx = i;
-                    }
-                    else if (Math.Abs(distSq - bestDistSq) < Constants.Epsilon && pending[i].Id < (next?.Id ?? int.MaxValue))
-                    {
-                        next = pending[i];
-                        nextIdx = i;
-                    }
-                }
-                if (next != null && nextIdx >= 0)
-                {
-                    route.Add(next);
-                    current = next;
-                    pending.RemoveAt(nextIdx);
-                }
-                else
-                {
-                    break;
-                }
-            }
-            route.Add(Depot);
-            return route;
-        }
-
-        public static List<Delivery> ConstructClarkeWrightRoute(List<Delivery> allDeliveries)
-        {
-            if (allDeliveries == null || allDeliveries.Count == 0) return new List<Delivery> { Depot, Depot };
-            if (allDeliveries.Count == 1) return new List<Delivery> { Depot, allDeliveries[0], Depot };
-
-            Dictionary<(int, int), double> distCache = new Dictionary<(int, int), double>();
-            double GetDist(Delivery d1, Delivery d2)
-            {
-                int id1 = d1.Id;
-                int id2 = d2.Id;
-                if (id1 > id2)
-                {
-                    int temp = id1;
-                    id1 = id2;
-                    id2 = temp;
-                }
-                if (!distCache.TryGetValue((id1, id2), out double d))
-                {
-                    d = CalculateEuclideanDistance(d1, d2);
-                    distCache[(id1, id2)] = d;
-                }
-                return d;
-            }
-
-            List<Saving> savingsList = new List<Saving>();
-            for (int i = 0; i < allDeliveries.Count; i++)
-            {
-                Delivery di = allDeliveries[i];
-                double distDepotI = GetDist(Depot, di);
-                for (int j = i + 1; j < allDeliveries.Count; j++)
-                {
-                    Delivery dj = allDeliveries[j];
-                    double distDepotJ = GetDist(Depot, dj);
-                    double distIJ = GetDist(di, dj);
-                    double savingValue = distDepotI + distDepotJ - distIJ;
-                    if (savingValue > Constants.Epsilon) savingsList.Add(new Saving(di.Id, dj.Id, savingValue));
-                }
-            }
-
-            savingsList.Sort((s1, s2) => s2.Value.CompareTo(s1.Value));
-
-            Dictionary<int, List<int>> representativeToRoute = new Dictionary<int, List<int>>();
-            Dictionary<int, int> deliveryToRep = new Dictionary<int, int>();
-            Dictionary<int, int> firstDelInRoute = new Dictionary<int, int>();
-            Dictionary<int, int> lastDelInRoute = new Dictionary<int, int>();
-
-            foreach (Delivery d in allDeliveries)
-            {
-                representativeToRoute[d.Id] = new List<int> { d.Id };
-                deliveryToRep[d.Id] = d.Id;
-                firstDelInRoute[d.Id] = d.Id;
-                lastDelInRoute[d.Id] = d.Id;
-            }
-
-            foreach (Saving s in savingsList)
-            {
-                int repI = deliveryToRep[s.DeliveryIdI];
-                int repJ = deliveryToRep[s.DeliveryIdJ];
-                if (repI == repJ) continue;
-                bool canMerge = lastDelInRoute[repI] == s.DeliveryIdI && firstDelInRoute[repJ] == s.DeliveryIdJ;
-                if (canMerge)
-                {
-                    List<int> routeI = representativeToRoute[repI];
-                    List<int> routeJ = representativeToRoute[repJ];
-                    routeI.AddRange(routeJ);
-                    foreach (int dId in routeJ) deliveryToRep[dId] = repI;
-                    lastDelInRoute[repI] = lastDelInRoute[repJ];
-                    representativeToRoute.Remove(repJ);
-                    firstDelInRoute.Remove(repJ);
-                    lastDelInRoute.Remove(repJ);
-                }
-                else
-                {
-                    bool canMergeReverse = lastDelInRoute[repJ] == s.DeliveryIdJ && firstDelInRoute[repI] == s.DeliveryIdI;
-                    if (canMergeReverse)
-                    {
-                        List<int> routeI = representativeToRoute[repI];
-                        List<int> routeJ = representativeToRoute[repJ];
-                        routeJ.AddRange(routeI);
-                        foreach (int dId in routeI) deliveryToRep[dId] = repJ;
-                        lastDelInRoute[repJ] = lastDelInRoute[repI];
-                        representativeToRoute.Remove(repI);
-                        firstDelInRoute.Remove(repI);
-                        lastDelInRoute.Remove(repI);
-                    }
-                }
-            }
-
-            List<Delivery> finalRoute = new List<Delivery> { Depot };
-            if (representativeToRoute.Count > 1)
-            {
-                foreach (List<int> group in representativeToRoute.Values)
-                {
-                    foreach (int dId in group)
-                    {
-                        finalRoute.Add(allDeliveries.First(d => d.Id == dId));
-                    }
-                }
-            }
-            else
-            {
-                List<int> singleList = representativeToRoute.Values.First();
-                foreach (int dId in singleList)
-                {
-                    finalRoute.Add(allDeliveries.First(d => d.Id == dId));
-                }
-            }
-            finalRoute.Add(Depot);
-            return finalRoute;
-        }
-
+        /// <summary>
+        /// Applies the 2-Opt algorithm to reduce crossing edges and improve the route distance.
+        /// </summary>
         public static List<Delivery> OptimizeRouteUsing2Opt(List<Delivery> initialRoute)
         {
-            if (initialRoute == null || initialRoute.Count < 4) return initialRoute ?? new List<Delivery>();
+            if (initialRoute == null || initialRoute.Count < 4)
+            {
+                return initialRoute ?? new List<Delivery>();
+            }
+
             List<Delivery> currentRoute = new List<Delivery>(initialRoute);
             bool improvement = true;
-            int maxIterations = 10000;
-            int iter = 0;
+            int maxIterations = Constants.Max2OptIterations;
+            int iterationCount = 0;
 
-            while (improvement && iter < maxIterations)
+            while (improvement && iterationCount < maxIterations)
             {
                 improvement = false;
-                iter++;
-                for (int i = 0; i < currentRoute.Count - 3; i++)
+                iterationCount++;
+
+                for (int primaryIndex = 0; primaryIndex < currentRoute.Count - 3; primaryIndex++)
                 {
-                    for (int j = i + 2; j < currentRoute.Count - 1; j++)
+                    for (int secondaryIndex = primaryIndex + 2; secondaryIndex < currentRoute.Count - 1; secondaryIndex++)
                     {
-                        Delivery A = currentRoute[i];
-                        Delivery B = currentRoute[i + 1];
-                        Delivery C = currentRoute[j];
-                        Delivery D = currentRoute[j + 1];
-                        double curCost = CalculateEuclideanDistance(A, B) + CalculateEuclideanDistance(C, D);
-                        double newCost = CalculateEuclideanDistance(A, C) + CalculateEuclideanDistance(B, D);
-                        if (newCost < curCost - Constants.ImprovementThreshold)
+                        Delivery deliveryA = currentRoute[primaryIndex];
+                        Delivery deliveryB = currentRoute[primaryIndex + 1];
+                        Delivery deliveryC = currentRoute[secondaryIndex];
+                        Delivery deliveryD = currentRoute[secondaryIndex + 1];
+
+                        double currentCost = CalculateEuclideanDistance(deliveryA, deliveryB)
+                            + CalculateEuclideanDistance(deliveryC, deliveryD);
+
+                        double updatedCost = CalculateEuclideanDistance(deliveryA, deliveryC)
+                            + CalculateEuclideanDistance(deliveryB, deliveryD);
+
+                        bool cheaperSwap = updatedCost < currentCost - Constants.ImprovementThreshold;
+                        if (cheaperSwap)
                         {
-                            ReverseSegment(currentRoute, i + 1, j);
+                            ReverseSegment(currentRoute, primaryIndex + 1, secondaryIndex);
                             improvement = true;
                         }
                     }
@@ -230,22 +104,28 @@ namespace RouteOptimizationApi.Services
             return currentRoute;
         }
 
-        static void ReverseSegment(List<Delivery> route, int start, int end)
+        /// <summary>
+        /// Reverses the segment of the route from start to end indices.
+        /// </summary>
+        private static void ReverseSegment(List<Delivery> route, int startIndex, int endIndex)
         {
-            while (start < end)
+            while (startIndex < endIndex)
             {
-                Delivery temp = route[start];
-                route[start] = route[end];
-                route[end] = temp;
-                start++;
-                end--;
+                Delivery tempDelivery = route[startIndex];
+                route[startIndex] = route[endIndex];
+                route[endIndex] = tempDelivery;
+                startIndex++;
+                endIndex--;
             }
         }
 
+        /// <summary>
+        /// Splits an optimized route among multiple drivers by searching for the minimal makespan using a binary search approach.
+        /// </summary>
         public static void FindBestPartitionBinarySearch(
             List<Delivery> optimizedRoute,
             int numberOfDrivers,
-            ProgressReporter? reporter,
+            ProgressReporter reporter,
             out int[] bestCuts,
             out double minMakespan
         )
@@ -253,12 +133,14 @@ namespace RouteOptimizationApi.Services
             minMakespan = double.MaxValue;
             bestCuts = Array.Empty<int>();
             long iterations = 0;
+
             if (optimizedRoute == null || optimizedRoute.Count < 2)
             {
                 minMakespan = 0;
                 reporter?.Invoke(iterations);
                 return;
             }
+
             int deliveryCount = optimizedRoute.Count - 2;
             if (deliveryCount <= 0)
             {
@@ -266,41 +148,29 @@ namespace RouteOptimizationApi.Services
                 reporter?.Invoke(iterations);
                 return;
             }
+
             if (numberOfDrivers <= 0)
             {
                 minMakespan = ComputeTotalRouteDistance(optimizedRoute);
                 reporter?.Invoke(iterations);
                 return;
             }
+
             if (numberOfDrivers == 1)
             {
                 minMakespan = ComputeSubRouteDistanceWithDepot(optimizedRoute, 1, deliveryCount);
                 reporter?.Invoke(iterations);
                 return;
             }
+
             if (numberOfDrivers >= deliveryCount)
             {
-                minMakespan = 0;
-                double maxSingle = 0;
-                List<int> cuts = new List<int>();
-                for (int i = 1; i <= deliveryCount; i++)
-                {
-                    double dist = ComputeSubRouteDistanceWithDepot(optimizedRoute, i, i);
-                    if (dist > maxSingle) maxSingle = dist;
-                    if (i < deliveryCount) cuts.Add(i);
-                }
-                minMakespan = maxSingle;
-                while (cuts.Count < numberOfDrivers - 1) cuts.Add(deliveryCount);
-                bestCuts = cuts.Take(numberOfDrivers - 1).ToArray();
+                AssignOneDeliveryPerDriver(optimizedRoute, numberOfDrivers, deliveryCount, out bestCuts, out minMakespan);
                 reporter?.Invoke(iterations);
                 return;
             }
-            double lowerBound = 0.0;
-            for (int i = 1; i <= deliveryCount; i++)
-            {
-                double singleDist = ComputeSubRouteDistanceWithDepot(optimizedRoute, i, i);
-                if (singleDist > lowerBound) lowerBound = singleDist;
-            }
+
+            double lowerBound = GetMaxSingleDeliveryCost(optimizedRoute, deliveryCount);
             double upperBound = ComputeTotalRouteDistance(optimizedRoute);
             double optimal = upperBound;
             int[] currentBestCuts = Array.Empty<int>();
@@ -309,106 +179,186 @@ namespace RouteOptimizationApi.Services
             while (lowerBound <= upperBound && iterations < maxBinIters)
             {
                 iterations++;
-                double mid = lowerBound + (upperBound - lowerBound) / 2.0;
-                if (IsPartitionFeasible(optimizedRoute, numberOfDrivers, mid, out int[] potentialCuts))
+                double midValue = lowerBound + (upperBound - lowerBound) / 2.0;
+
+                bool feasible = IsPartitionFeasible(optimizedRoute, numberOfDrivers, midValue, out int[] potentialCuts);
+                if (feasible)
                 {
-                    optimal = mid;
+                    optimal = midValue;
                     currentBestCuts = potentialCuts;
-                    upperBound = mid - Constants.Epsilon;
+                    upperBound = midValue - Constants.Epsilon;
                 }
                 else
                 {
-                    lowerBound = mid + Constants.Epsilon;
+                    lowerBound = midValue + Constants.Epsilon;
                 }
                 reporter?.Invoke(iterations);
             }
+
             minMakespan = optimal;
             if (currentBestCuts.Length == 0)
             {
-                if (!IsPartitionFeasible(optimizedRoute, numberOfDrivers, minMakespan, out currentBestCuts))
-                {
-                    currentBestCuts = Array.Empty<int>();
-                }
+                bool finalCheck = IsPartitionFeasible(optimizedRoute, numberOfDrivers, minMakespan, out currentBestCuts);
+                if (!finalCheck) currentBestCuts = Array.Empty<int>();
             }
             bestCuts = currentBestCuts;
+
             if (bestCuts.Length < numberOfDrivers - 1 && deliveryCount > 0)
             {
-                List<int> padded = new List<int>(bestCuts);
-                while (padded.Count < numberOfDrivers - 1) padded.Add(deliveryCount);
-                bestCuts = padded.Distinct().OrderBy(c => c).ToArray();
+                bestCuts = PadCutIndices(bestCuts, numberOfDrivers, deliveryCount);
             }
             reporter?.Invoke(iterations);
         }
 
-        static bool IsPartitionFeasible(List<Delivery> route, int maxDrivers, double maxAllowedMakespan, out int[] cuts)
+        /// <summary>
+        /// Calculates the distance of a sub-route, including travel from the depot to the first delivery and from the last delivery back to the depot.
+        /// </summary>
+        public static double ComputeSubRouteDistanceWithDepot(List<Delivery> route, int startIndex, int endIndex)
         {
-            cuts = Array.Empty<int>();
-            if (route == null || route.Count < 2) return true;
-            int n = route.Count - 2;
-            int driversUsed = 1;
-            int start = 1;
-            List<int> cutIndices = new List<int>();
+            if (route == null || route.Count < 2 || startIndex > endIndex) return 0;
 
-            for (int i = 1; i <= n; i++)
+            if (startIndex < 1 || endIndex >= route.Count - 1)
             {
-                double cost = ComputeSubRouteDistanceWithDepot(route, start, i);
-                if (cost > maxAllowedMakespan + Constants.Epsilon)
-                {
-                    if (i == start) return false;
-                    cutIndices.Add(i - 1);
-                    driversUsed++;
-                    start = i;
-                    double singleCost = ComputeSubRouteDistanceWithDepot(route, i, i);
-                    if (singleCost > maxAllowedMakespan + Constants.Epsilon) return false;
-                    if (driversUsed > maxDrivers) return false;
-                }
-            }
-            cuts = cutIndices.ToArray();
-            return true;
-        }
-
-        public static double ComputeSubRouteDistanceWithDepot(List<Delivery> route, int start, int end)
-        {
-            if (route == null || route.Count < 2 || start > end) return 0;
-            if (start < 1 || end >= route.Count - 1)
-            {
-                if (end >= route.Count - 1 && start < route.Count - 1) end = route.Count - 2;
+                if (endIndex >= route.Count - 1 && startIndex < route.Count - 1) endIndex = route.Count - 2;
                 else return 0;
             }
-            double total = CalculateEuclideanDistance(Depot, route[start]);
-            for (int i = start; i < end; i++)
+
+            double totalDistance = CalculateEuclideanDistance(Depot, route[startIndex]);
+            for (int i = startIndex; i < endIndex; i++)
             {
-                total += CalculateEuclideanDistance(route[i], route[i + 1]);
+                totalDistance += CalculateEuclideanDistance(route[i], route[i + 1]);
             }
-            total += CalculateEuclideanDistance(route[end], Depot);
-            return total;
+            totalDistance += CalculateEuclideanDistance(route[endIndex], Depot);
+
+            return totalDistance;
         }
 
+        /// <summary>
+        /// Computes the total distance of a full route by summing distances between consecutive points.
+        /// </summary>
         public static double ComputeTotalRouteDistance(List<Delivery> route)
         {
             if (route == null || route.Count < 2) return 0;
-            double total = 0;
+            double totalDistance = 0;
+
             for (int i = 0; i < route.Count - 1; i++)
             {
-                total += CalculateEuclideanDistance(route[i], route[i + 1]);
+                totalDistance += CalculateEuclideanDistance(route[i], route[i + 1]);
             }
-            return total;
+            return totalDistance;
         }
 
-        public static double CalculateEuclideanDistance(Delivery d1, Delivery d2)
+        /// <summary>
+        /// Calculates Euclidean distance between two deliveries.
+        /// </summary>
+        public static double CalculateEuclideanDistance(Delivery firstDelivery, Delivery secondDelivery)
         {
-            if (d1 == null || d2 == null) return 0;
-            double dx = d2.X - d1.X;
-            double dy = d2.Y - d1.Y;
-            return Math.Sqrt(dx * dx + dy * dy);
+            if (firstDelivery == null || secondDelivery == null) return 0;
+            double deltaX = secondDelivery.X - firstDelivery.X;
+            double deltaY = secondDelivery.Y - firstDelivery.Y;
+            return Math.Sqrt(deltaX * deltaX + deltaY * deltaY);
         }
 
-        static double CalculateEuclideanDistanceSquared(Delivery d1, Delivery d2)
+        private static double CalculateEuclideanDistanceSquared(Delivery firstDelivery, Delivery secondDelivery)
         {
-            if (d1 == null || d2 == null) return 0;
-            double dx = d2.X - d1.X;
-            double dy = d2.Y - d1.Y;
-            return dx * dx + dy * dy;
+            if (firstDelivery == null || secondDelivery == null) return 0;
+            double deltaX = secondDelivery.X - firstDelivery.X;
+            double deltaY = secondDelivery.Y - firstDelivery.Y;
+            return deltaX * deltaX + deltaY * deltaY;
+        }
+
+        /// <summary>
+        /// Assigns one delivery per driver when there are more or equal drivers than deliveries, or nearly so.
+        /// </summary>
+        private static void AssignOneDeliveryPerDriver(
+            List<Delivery> optimizedRoute,
+            int numberOfDrivers,
+            int deliveryCount,
+            out int[] bestCuts,
+            out double minMakespan
+        )
+        {
+            minMakespan = 0;
+            double maxSingle = 0;
+            List<int> cuts = new List<int>();
+
+            for (int i = 1; i <= deliveryCount; i++)
+            {
+                double subDistance = ComputeSubRouteDistanceWithDepot(optimizedRoute, i, i);
+                if (subDistance > maxSingle) maxSingle = subDistance;
+                if (i < deliveryCount) cuts.Add(i);
+            }
+
+            minMakespan = maxSingle;
+            while (cuts.Count < numberOfDrivers - 1)
+            {
+                cuts.Add(deliveryCount);
+            }
+            bestCuts = cuts.Take(numberOfDrivers - 1).ToArray();
+        }
+
+        /// <summary>
+        /// Pads the cut indices so there are enough cuts for each driver, using distinct cut positions if possible.
+        /// </summary>
+        private static int[] PadCutIndices(int[] currentCuts, int numberOfDrivers, int deliveryCount)
+        {
+            List<int> paddedList = new List<int>(currentCuts);
+
+            while (paddedList.Count < numberOfDrivers - 1)
+            {
+                paddedList.Add(deliveryCount);
+            }
+            return paddedList.Distinct().OrderBy(c => c).ToArray();
+        }
+
+        /// <summary>
+        /// Checks if a route can be split among drivers without exceeding a specified max allowed distance per driver.
+        /// </summary>
+        private static bool IsPartitionFeasible(List<Delivery> route, int maxDrivers, double maxAllowedMakespan, out int[] cuts)
+        {
+            cuts = Array.Empty<int>();
+            if (route == null || route.Count < 2) return true;
+
+            int totalDeliveries = route.Count - 2;
+            int usedDriverCount = 1;
+            int start = 1;
+            List<int> subRouteCuts = new List<int>();
+
+            for (int i = 1; i <= totalDeliveries; i++)
+            {
+                double segmentDistance = ComputeSubRouteDistanceWithDepot(route, start, i);
+                if (segmentDistance > maxAllowedMakespan + Constants.Epsilon)
+                {
+                    if (i == start) return false;
+                    subRouteCuts.Add(i - 1);
+                    usedDriverCount++;
+                    start = i;
+
+                    double singleCost = ComputeSubRouteDistanceWithDepot(route, i, i);
+                    if (singleCost > maxAllowedMakespan + Constants.Epsilon) return false;
+                    if (usedDriverCount > maxDrivers) return false;
+                }
+            }
+            cuts = subRouteCuts.ToArray();
+            return true;
+        }
+
+        /// <summary>
+        /// Finds the largest single-delivery sub-route cost to establish a lower bound for the binary search.
+        /// </summary>
+        private static double GetMaxSingleDeliveryCost(List<Delivery> route, int deliveryCount)
+        {
+            double lowerBound = 0.0;
+
+            for (int i = 1; i <= deliveryCount; i++)
+            {
+                double singleDistance = ComputeSubRouteDistanceWithDepot(route, i, i);
+                if (singleDistance > lowerBound)
+                {
+                    lowerBound = singleDistance;
+                }
+            }
+            return lowerBound;
         }
     }
 }
