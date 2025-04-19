@@ -1,8 +1,7 @@
 using Microsoft.AspNetCore.SignalR;
 
-namespace RouteOptimizationApi.Hubs
+namespace RouteOptimizationApi.Hubs;
+
+public class OptimizationHub : Hub
 {
-    public class OptimizationHub : Hub
-    {
-    }
 }
