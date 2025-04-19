@@ -18,40 +18,47 @@ namespace RouteOptimizationApi.Services
         /// <returns>A list of deliveries forming a route starting and ending at the depot.</returns>
         public static List<Delivery> ConstructNearestNeighborRoute(List<Delivery> allDeliveries)
         {
-            // Create a copy of the deliveries we need to visit, excluding the depot
+            // Make a mutable copy of the deliveries we still need to hit (the depot isn't in this list)
             List<Delivery> pendingDeliveries = new List<Delivery>(allDeliveries ?? Enumerable.Empty<Delivery>());
 
-            // Initialize the route with the depot as the starting point
+            // Start the route at the depot
             List<Delivery> route = new List<Delivery> { Depot };
             Delivery currentDelivery = Depot;
 
-            // If there are no deliveries, simply return depot -> depot
+            // No deliveries?  Easy – depot → depot and done.
             if (!pendingDeliveries.Any())
             {
                 route.Add(Depot);
                 return route;
             }
 
-            // Continue until all deliveries have been visited or no closer delivery is found
+            // Keep hopping to the closest unvisited stop until we run out of stops
             while (pendingDeliveries.Count > 0)
             {
                 double lowestDistanceSquared = double.MaxValue;
                 Delivery nextCandidate = null;
                 int nextCandidateIndex = -1;
 
-                // Check every unvisited delivery to find the closest one
+                // Scan every unvisited delivery and remember the best one
                 for (int pendingIndex = 0; pendingIndex < pendingDeliveries.Count; pendingIndex++)
                 {
                     double distanceSquared = CalculateEuclideanDistance(currentDelivery, pendingDeliveries[pendingIndex]);
 
-                    // TODO: explain this part better
-                    // If we find a strictly smaller distance, or an equally small distance with a lower ID, we update our best pick
+                    // --------- WHY THESE TWO FLAGS EXIST ----------
+                    // strictlyBetterDistance
+                    // true when this delivery is clearly closer (by more than Epsilon).
+                    // tieButLowerId
+                    // true when it's basically the *same* distance as our current best (within Epsilon)
+                    // and its Id is smaller.  We pick the lower Id so:
+                    // 1. the algorithm is deterministic – run it twice, get the same route.
+                    // 2. edge tests don't fail randomly because two points were tied.
                     bool strictlyBetterDistance = distanceSquared < lowestDistanceSquared - Constants.Epsilon;
                     bool tieButLowerId =
                         Math.Abs(distanceSquared - lowestDistanceSquared) < Constants.Epsilon &&
                         pendingDeliveries[pendingIndex].Id < (nextCandidate?.Id ?? int.MaxValue);
 
-                    // TODO: explain this part better
+                    // If we found something closer *or* equally close but with a lower Id,
+                    // we treat it as the new best move.
                     if (strictlyBetterDistance || tieButLowerId)
                     {
                         lowestDistanceSquared = distanceSquared;
@@ -60,7 +67,7 @@ namespace RouteOptimizationApi.Services
                     }
                 }
 
-                // If a valid next candidate is found, move there; otherwise, break
+                // Move to the chosen delivery (if any).  If none was found, bail out.
                 if (nextCandidate != null && nextCandidateIndex >= 0)
                 {
                     route.Add(nextCandidate);
@@ -69,11 +76,11 @@ namespace RouteOptimizationApi.Services
                 }
                 else
                 {
-                    break;
+                    break; // Shouldn't happen, but keeps us safe.
                 }
             }
 
-            // Close the loop by returning to the depot
+            // Finally, head back home.
             route.Add(Depot);
             return route;
         }

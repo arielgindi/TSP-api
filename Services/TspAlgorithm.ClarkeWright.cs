@@ -1,269 +1,248 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
 using RouteOptimizationApi.Common;
 using RouteOptimizationApi.Models;
 
-namespace RouteOptimizationApi.Services
+namespace RouteOptimizationApi.Services;
+
+/// <summary>
+/// Partial class file containing the Clarke-Wright Savings approach for TSP.
+/// </summary>
+public static partial class TspAlgorithm
 {
     /// <summary>
-    /// Partial class file containing the Clarke-Wright Savings approach for TSP.
+    /// Builds a route using Clarke-Wright Savings. Each delivery starts alone,
+    /// then we merge them by the highest "savings" until we get one full route.
     /// </summary>
-    public static partial class TspAlgorithm
+    public static List<Delivery> ConstructClarkeWrightRoute(List<Delivery> deliveries)
     {
-        /// <summary>
-        /// Constructs a route using the Clarke-Wright Savings approach.
-        /// Each delivery starts in its own mini-route, and these routes
-        /// are merged based on the greatest distance "savings." The result
-        /// is a single route starting and ending at the depot.
-        /// </summary>
-        /// <param name="deliveries">All deliveries to be included in the route.</param>
-        /// <returns>A route starting and ending at the depot, containing all deliveries.</returns>
-        public static List<Delivery> ConstructClarkeWrightRoute(List<Delivery> deliveries)
+        // Handle a couple simple cases first.
+        if (deliveries == null || deliveries.Count == 0)
         {
-            // if there are zero deliveries, just return Depot to Depot.
-            if (deliveries == null || deliveries.Count == 0)
-            {
-                return new List<Delivery> { Depot, Depot };
-            }
-            if (deliveries.Count == 1)
-            {
-                return new List<Delivery> { Depot, deliveries[0], Depot };
-            }
-
-            // That's storing distance between each 2 deleveries points, 
-            Dictionary<(int, int), double> distanceCache = new Dictionary<(int, int), double>();
-            List<Saving> allSavings = ComputeAllSavings(deliveries, distanceCache);
-
-            (Dictionary<int, List<int>> RepToRoute,
-             Dictionary<int, int> DeliveryToRep,
-             Dictionary<int, int> FirstDeliveryInRoute,
-             Dictionary<int, int> LastDeliveryInRoute) groupData
-                = InitializeRouteGroups(deliveries);
-
-            MergeUsingSavings(allSavings, groupData);
-
-            List<Delivery> finalRoute = BuildFinalRoute(deliveries, groupData);
-            finalRoute.Add(Depot);
-            return finalRoute;
+            List<Delivery> emptyList = new List<Delivery>();
+            emptyList.Add(Depot);
+            emptyList.Add(Depot);
+            return emptyList;
         }
 
-        /// <summary>
-        /// Calculates distance "savings" for each pair of deliveries.
-        /// The formula of saving betten deleviry points a and b is:
-        /// Savings(a,b) = Distance(Depot, a) + Distance(Depot, b) - Distance(a,b)
-        /// </summary>
-        private static List<Saving> ComputeAllSavings(
-            List<Delivery> deliveries,
-            Dictionary<(int, int), double> distanceCache
-        )
+        if (deliveries.Count == 1)
         {
-            List<Saving> savingsList = new List<Saving>();
-
-            double GetDistance(Delivery first, Delivery second)
-            {
-                int lowId = Math.Min(first.Id, second.Id);
-                int highId = Math.Max(first.Id, second.Id);
-
-                // If that distance was calculated before, return it
-                if (!distanceCache.TryGetValue((lowId, highId), out double dist))
-                {
-                    // if we went here, thus its the first time asked for this distance of these 2 points, 
-                    // thus, its caclulated first time and than store in the distanceCache.
-                    dist = CalculateEuclideanDistance(first, second);
-                    distanceCache[(lowId, highId)] = dist;
-                }
-                
-                return dist;
-            }
-
-            for (int indexA = 0; indexA < deliveries.Count; indexA++)
-            {
-                Delivery deleviryA = deliveries[indexA];
-                double distanceDepotToA = GetDistance(Depot, deleviryA);
-
-                for (int indexB = indexA + 1; indexB < deliveries.Count; indexB++)
-                {
-                    Delivery deleviryB = deliveries[indexB];
-                    double distanceDepotToB = GetDistance(Depot, deleviryB);
-                    double distAToB = GetDistance(deleviryA, deleviryB);
-
-                    // Savings(a,b) = Distance(Depot, a) + Distance(Depot, b) - Distance(a,b)
-                    double savingValue = distanceDepotToA + distanceDepotToB - distAToB;
-
-                    // TODO: ask about this line later
-                    if (savingValue > Constants.Epsilon)
-                    {
-                        savingsList.Add(new Saving(deleviryA.Id, deleviryB.Id, savingValue));
-                    }
-                }
-            }
-
-            // after storing each saving, we store it for later
-            savingsList.Sort((s1, s2) => s2.Value.CompareTo(s1.Value));
-            return savingsList;
+            List<Delivery> singleDeliveryRoute = new List<Delivery>();
+            singleDeliveryRoute.Add(Depot);
+            singleDeliveryRoute.Add(deliveries[0]);
+            singleDeliveryRoute.Add(Depot);
+            return singleDeliveryRoute;
         }
 
-        /// <summary>
-        /// Initializes each delivery as its own mini-route with the same route representative.
-        /// </summary>
-        /// TODO: change this!!! i dont like this, change it to something like a graph of a linked list
-        private static (
-            Dictionary<int, List<int>> RepToRoute,
-            Dictionary<int, int> DeliveryToRep,
-            Dictionary<int, int> FirstDeliveryInRoute,
-            Dictionary<int, int> LastDeliveryInRoute
-        ) InitializeRouteGroups(List<Delivery> deliveries)
+        // Grab all pairwise savings info so we know which merges help most.
+        Dictionary<(int, int), double> distanceCache = new Dictionary<(int, int), double>();
+        List<Saving> savingsList = ComputeAllSavings(deliveries, distanceCache);
+
+        // Set up our new doubly linked structure for the routes.
+        CwDoublyLinkedRoute routeManager = new CwDoublyLinkedRoute(deliveries);
+
+        // Merge routes in order of biggest savings first.
+        foreach (Saving saving in savingsList)
         {
-            Dictionary<int, List<int>> repToRoute = new Dictionary<int, List<int>>();
-            Dictionary<int, int> deliveryToRep = new Dictionary<int, int>();
-            Dictionary<int, int> firstDeliveryInRoute = new Dictionary<int, int>();
-            Dictionary<int, int> lastDeliveryInRoute = new Dictionary<int, int>();
-
-            foreach (Delivery delivery in deliveries)
-            {
-                repToRoute[delivery.Id] = new List<int> { delivery.Id };
-                deliveryToRep[delivery.Id] = delivery.Id;
-                firstDeliveryInRoute[delivery.Id] = delivery.Id;
-                lastDeliveryInRoute[delivery.Id] = delivery.Id;
-            }
-
-            return (repToRoute, deliveryToRep, firstDeliveryInRoute, lastDeliveryInRoute);
+            routeManager.TryMergeBySavings(saving);
         }
 
-        /// <summary>
-        /// Merges mini-routes according to savings, either forward or reverse.
-        /// </summary>
-        private static void MergeUsingSavings(
-            List<Saving> allSavings,
-            (
-                Dictionary<int, List<int>> RepToRoute,
-                Dictionary<int, int> DeliveryToRep,
-                Dictionary<int, int> FirstDeliveryInRoute,
-                Dictionary<int, int> LastDeliveryInRoute
-            ) groupData
-        )
+        // Convert merged structure into a final route of deliveries.
+        List<Delivery> finalRoute = routeManager.BuildFinalRoute(deliveries);
+        finalRoute.Add(Depot);
+        return finalRoute;
+    }
+
+    /// <summary>
+    /// Calculates distance "savings" for each pair of deliveries.
+    /// Savings(a,b) = Dist(Depot,a) + Dist(Depot,b) - Dist(a,b).
+    /// </summary>
+    private static List<Saving> ComputeAllSavings(
+        List<Delivery> deliveries,
+        Dictionary<(int, int), double> distanceCache
+    )
+    {
+        List<Saving> savingsList = new List<Saving>();
+
+        double GetDistance(Delivery first, Delivery second)
         {
-            foreach (Saving savingItem in allSavings)
+            int lowId = Math.Min(first.Id, second.Id);
+            int highId = Math.Max(first.Id, second.Id);
+
+            if (!distanceCache.TryGetValue((lowId, highId), out double dist))
             {
-                int repI = groupData.DeliveryToRep[savingItem.FirstDeliveryId];
-                int repJ = groupData.DeliveryToRep[savingItem.SecondDeliveryId];
+                dist = CalculateEuclideanDistance(first, second);
+                distanceCache[(lowId, highId)] = dist;
+            }
+            return dist;
+        }
 
-                if (repI == repJ)
+        for (int i = 0; i < deliveries.Count; i++)
+        {
+            Delivery a = deliveries[i];
+            double depotToA = GetDistance(Depot, a);
+
+            for (int j = i + 1; j < deliveries.Count; j++)
+            {
+                Delivery b = deliveries[j];
+                double depotToB = GetDistance(Depot, b);
+                double aToB = GetDistance(a, b);
+
+                double savingValue = depotToA + depotToB - aToB;
+                if (savingValue > Constants.Epsilon)
                 {
-                    continue;
-                }
-
-                bool forwardMergePossible =
-                    groupData.LastDeliveryInRoute[repI] == savingItem.FirstDeliveryId &&
-                    groupData.FirstDeliveryInRoute[repJ] == savingItem.SecondDeliveryId;
-
-                bool reverseMergePossible =
-                    groupData.LastDeliveryInRoute[repJ] == savingItem.SecondDeliveryId &&
-                    groupData.FirstDeliveryInRoute[repI] == savingItem.FirstDeliveryId;
-
-                if (forwardMergePossible)
-                {
-                    MergeRoutes(
-                        groupData.RepToRoute,
-                        groupData.DeliveryToRep,
-                        groupData.LastDeliveryInRoute,
-                        repI,
-                        repJ
-                    );
-                    groupData.LastDeliveryInRoute[repI] = groupData.LastDeliveryInRoute[repJ];
-                    CleanupRoute(repJ, groupData.RepToRoute, groupData.FirstDeliveryInRoute, groupData.LastDeliveryInRoute);
-                }
-                else if (reverseMergePossible)
-                {
-                    MergeRoutes(
-                        groupData.RepToRoute,
-                        groupData.DeliveryToRep,
-                        groupData.LastDeliveryInRoute,
-                        repJ,
-                        repI
-                    );
-                    groupData.LastDeliveryInRoute[repJ] = groupData.LastDeliveryInRoute[repI];
-                    CleanupRoute(repI, groupData.RepToRoute, groupData.FirstDeliveryInRoute, groupData.LastDeliveryInRoute);
+                    savingsList.Add(new Saving(a.Id, b.Id, savingValue));
                 }
             }
         }
 
-        /// <summary>
-        /// Appends all deliveries in the merging route to the target route, updating 
-        /// route membership and final delivery references.
-        /// </summary>
-        private static void MergeRoutes(
-            Dictionary<int, List<int>> repToRoute,
-            Dictionary<int, int> deliveryToRep,
-            Dictionary<int, int> lastDelInRoute,
-            int targetRep,
-            int mergingRep
-        )
+        savingsList.Sort((x, y) => y.Value.CompareTo(x.Value));
+        return savingsList;
+    }
+
+    /// <summary>
+    /// Replaces the old route graph logic with a doubly linked list manager.
+    /// </summary>
+    private sealed class CwDoublyLinkedRoute
+    {
+        // A quick lookup table so we can find each node by its delivery ID.
+        private readonly Dictionary<int, DoublyLinkedDeliveryNode> nodeLookup;
+
+        // The set of delivery IDs that are currently at the start of their chains.
+        // If a node is in here, it means it's a "root" (has no previous node).
+        private readonly HashSet<int> routeRoots;
+
+        public CwDoublyLinkedRoute(List<Delivery> deliveries)
         {
-            List<int> targetRoute = repToRoute[targetRep];
-            List<int> mergingRoute = repToRoute[mergingRep];
+            nodeLookup = new Dictionary<int, DoublyLinkedDeliveryNode>();
+            routeRoots = new HashSet<int>();
 
-            targetRoute.AddRange(mergingRoute);
-
-            foreach (int mergedId in mergingRoute)
+            // Build a node for each delivery and treat each as its own route initially.
+            foreach (Delivery d in deliveries)
             {
-                deliveryToRep[mergedId] = targetRep;
+                DoublyLinkedDeliveryNode node = new DoublyLinkedDeliveryNode(d);
+                nodeLookup[d.Id] = node;
+                routeRoots.Add(d.Id);
+            }
+        }
+
+        /// <summary>
+        /// Tries merging two routes if the nodes fit the "ends" of their chains
+        /// and are in different clusters.
+        /// </summary>
+        public void TryMergeBySavings(Saving saving)
+        {
+            int firstId = saving.FirstDeliveryId;
+            int secondId = saving.SecondDeliveryId;
+
+            // Find each node and see who leads their respective cluster.
+            DoublyLinkedDeliveryNode nodeA = nodeLookup[firstId];
+            DoublyLinkedDeliveryNode nodeB = nodeLookup[secondId];
+            int leaderA = nodeA.ClusterLeaderId;
+            int leaderB = nodeB.ClusterLeaderId;
+
+            // Already in the same cluster? No need to merge.
+            if (leaderA == leaderB)
+            {
+                return;
             }
 
-            lastDelInRoute[targetRep] = lastDelInRoute[mergingRep];
-        }
+            // Check if we can do a forward merge (A is tail, B is head).
+            bool canForwardMerge = IsRouteEnd(nodeA, leaderA, true)
+                && IsRouteEnd(nodeB, leaderB, false);
 
-        /// <summary>
-        /// Removes the merged route's dictionaries since it no longer exists independently.
-        /// </summary>
-        private static void CleanupRoute(
-            int oldRep,
-            Dictionary<int, List<int>> repToRoute,
-            Dictionary<int, int> firstDeliveryInRoute,
-            Dictionary<int, int> lastDeliveryInRoute
-        )
-        {
-            repToRoute.Remove(oldRep);
-            firstDeliveryInRoute.Remove(oldRep);
-            lastDeliveryInRoute.Remove(oldRep);
-        }
+            // Check if we can do a reverse merge (B is tail, A is head).
+            bool canReverseMerge = IsRouteEnd(nodeB, leaderB, true)
+                && IsRouteEnd(nodeA, leaderA, false);
 
-        /// <summary>
-        /// Combines the remaining route clusters into the final route. If there's only
-        /// one cluster, it already represents a complete route. Otherwise, the
-        /// method concatenates all of them.
-        /// </summary>
-        private static List<Delivery> BuildFinalRoute(
-            List<Delivery> deliveries,
-            (
-                Dictionary<int, List<int>> RepToRoute,
-                Dictionary<int, int> DeliveryToRep,
-                Dictionary<int, int> FirstDeliveryInRoute,
-                Dictionary<int, int> LastDeliveryInRoute
-            ) groupData
-        )
-        {
-            List<Delivery> finalRoute = new List<Delivery> { Depot };
-
-            if (groupData.RepToRoute.Count > 1)
+            if (canForwardMerge)
             {
-                foreach (List<int> routeIds in groupData.RepToRoute.Values)
-                {
-                    foreach (int deliveryId in routeIds)
-                    {
-                        Delivery foundDelivery = deliveries.First(d => d.Id == deliveryId);
-                        finalRoute.Add(foundDelivery);
-                    }
-                }
+                LinkRoutes(nodeA, nodeB, leaderA, leaderB);
+            }
+            else if (canReverseMerge)
+            {
+                LinkRoutes(nodeB, nodeA, leaderB, leaderA);
+            }
+        }
+
+        /// <summary>
+        /// Checks if a node is the "first" or "last" in its chain. 
+        /// "isEnd=true" means tail (no Next). "isEnd=false" means head (no Previous).
+        /// </summary>
+        private bool IsRouteEnd(DoublyLinkedDeliveryNode node, int routeLeader, bool isEnd)
+        {
+            // If it's the tail, "Next" must be null and the leader must match.
+            if (isEnd)
+            {
+                return (node.Next == null) && (node.ClusterLeaderId == routeLeader);
             }
             else
             {
-                List<int> singleRouteIds = groupData.RepToRoute.Values.First();
-                foreach (int deliveryId in singleRouteIds)
+                // If it's the head, "Previous" must be null and the leader must match.
+                return (node.Previous == null) && (node.ClusterLeaderId == routeLeader);
+            }
+        }
+
+        /// <summary>
+        /// Merges one route's tail into another route's head, and updates cluster leaders.
+        /// </summary>
+        private void LinkRoutes(
+            DoublyLinkedDeliveryNode tailNode,
+            DoublyLinkedDeliveryNode headNode,
+            int leaderA,
+            int leaderB
+        )
+        {
+            // Link them: A's tail -> B's head.
+            tailNode.Next = headNode;
+            headNode.Previous = tailNode;
+
+            // Update cluster for everyone in B's cluster to match A's leader.
+            UpdateClusterLeaders(leaderB, leaderA);
+
+            // If the head node was considered a root, it's no longer a root now.
+            if (routeRoots.Contains(headNode.Delivery.Id))
+            {
+                routeRoots.Remove(headNode.Delivery.Id);
+            }
+        }
+
+        /// <summary>
+        /// Updates everyone who had oldLeader to have newLeader instead.
+        /// This collapses two clusters into a single one.
+        /// </summary>
+        private void UpdateClusterLeaders(int oldLeader, int newLeader)
+        {
+            // Just loop all known nodes and update.
+            List<int> allIds = nodeLookup.Keys.ToList();
+            for (int i = 0; i < allIds.Count; i++)
+            {
+                int currentId = allIds[i];
+                DoublyLinkedDeliveryNode node = nodeLookup[currentId];
+                if (node.ClusterLeaderId == oldLeader)
                 {
-                    Delivery foundDelivery = deliveries.First(d => d.Id == deliveryId);
-                    finalRoute.Add(foundDelivery);
+                    node.ClusterLeaderId = newLeader;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Converts the linked-list chains into a final list of deliveries, 
+        /// appending them in order.
+        /// </summary>
+        public List<Delivery> BuildFinalRoute(List<Delivery> allDeliveries)
+        {
+            List<Delivery> finalRoute = new List<Delivery>();
+            finalRoute.Add(Depot);
+
+            // Go through each root and traverse forward.
+            // If we have more than one root, we append them in some order.
+            foreach (int rootId in routeRoots)
+            {
+                DoublyLinkedDeliveryNode currentNode = nodeLookup[rootId];
+                while (currentNode != null)
+                {
+                    // Grab the matching Delivery from the node itself.
+                    finalRoute.Add(currentNode.Delivery);
+                    currentNode = currentNode.Next;
                 }
             }
 

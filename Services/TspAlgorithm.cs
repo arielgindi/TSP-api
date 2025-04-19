@@ -33,14 +33,20 @@ public static partial class TspAlgorithm
         List<Delivery> deliveries = new List<Delivery>(count);
         HashSet<(int, int)> usedCoordinates = new HashSet<(int, int)> { (Depot.X, Depot.Y) };
 
-        // TODO: explain what is availableSlots better
+        // availableSlots is the total number of unique coordinate pairs 
+        // in the inclusive range [minCoord, maxCoord] minus 1 for the depot's own coordinates.
+        // This ensures we don't exceed the coordinate space capacity when generating deliveries.
         long availableSlots = ((long)maxCoord - minCoord + 1) * ((long)maxCoord - minCoord + 1) - 1;
+
         if (count > availableSlots) count = (int)Math.Max(0, availableSlots);
 
         for (int deliveryIndex = 1; deliveryIndex <= count; deliveryIndex++)
         {
-            // TODO: explain why this program needs to store attempts
+            // We track how many attempts we've made to find a new, unique (x, y) coordinate.
+            // If we exceed Constants.MaxAttempts, we stop to avoid an infinite loop 
+            // in cases where the space is too crowded to find unique coordinates.
             int attempts = 0;
+
             while (true)
             {
                 int randomX = randomGenerator.Next(minCoord, maxCoord + 1);
