@@ -35,11 +35,14 @@ namespace RouteOptimizationApi.Services
 
             List<Delivery> deliveries = new List<Delivery>(count);
             HashSet<(int, int)> usedCoordinates = new HashSet<(int, int)> { (Depot.X, Depot.Y) };
+
+            // TODO: explain what is availableSlots better
             long availableSlots = ((long)maxCoord - minCoord + 1) * ((long)maxCoord - minCoord + 1) - 1;
             if (count > availableSlots) count = (int)Math.Max(0, availableSlots);
 
             for (int deliveryIndex = 1; deliveryIndex <= count; deliveryIndex++)
             {
+                // TODO: explain why this program needs to store attempts
                 int attempts = 0;
                 while (true)
                 {
@@ -259,13 +262,6 @@ namespace RouteOptimizationApi.Services
             return Math.Sqrt(deltaX * deltaX + deltaY * deltaY);
         }
 
-        private static double CalculateEuclideanDistanceSquared(Delivery firstDelivery, Delivery secondDelivery)
-        {
-            if (firstDelivery == null || secondDelivery == null) return 0;
-            double deltaX = secondDelivery.X - firstDelivery.X;
-            double deltaY = secondDelivery.Y - firstDelivery.Y;
-            return deltaX * deltaX + deltaY * deltaY;
-        }
 
         /// <summary>
         /// Assigns one delivery per driver when there are more or equal drivers than deliveries, or nearly so.

@@ -42,14 +42,16 @@ namespace RouteOptimizationApi.Services
                 // Check every unvisited delivery to find the closest one
                 for (int pendingIndex = 0; pendingIndex < pendingDeliveries.Count; pendingIndex++)
                 {
-                    double distanceSquared = CalculateEuclideanDistanceSquared(currentDelivery, pendingDeliveries[pendingIndex]);
+                    double distanceSquared = CalculateEuclideanDistance(currentDelivery, pendingDeliveries[pendingIndex]);
 
+                    // TODO: explain this part better
                     // If we find a strictly smaller distance, or an equally small distance with a lower ID, we update our best pick
                     bool strictlyBetterDistance = distanceSquared < lowestDistanceSquared - Constants.Epsilon;
                     bool tieButLowerId =
                         Math.Abs(distanceSquared - lowestDistanceSquared) < Constants.Epsilon &&
                         pendingDeliveries[pendingIndex].Id < (nextCandidate?.Id ?? int.MaxValue);
 
+                    // TODO: explain this part better
                     if (strictlyBetterDistance || tieButLowerId)
                     {
                         lowestDistanceSquared = distanceSquared;

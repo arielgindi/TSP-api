@@ -226,6 +226,8 @@ namespace RouteOptimizationApi
             await SendProgress(algorithmLabel, "===== PATH " + algorithmLabel + ": " + fullMethodName + " =====", "header");
 
             Stopwatch buildSw = Stopwatch.StartNew();
+
+            // this line build the inital route, you shuold pass to it the function that is doing that specific algorithem!
             List<Delivery> initialRoute = routeBuilder(allDeliveries);
             buildSw.Stop();
             pathResult.BuildTimeMs = buildSw.Elapsed.TotalMilliseconds;
