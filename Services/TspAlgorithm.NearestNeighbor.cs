@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using RouteOptimizationApi.Models;
 
 namespace RouteOptimizationApi.Services;

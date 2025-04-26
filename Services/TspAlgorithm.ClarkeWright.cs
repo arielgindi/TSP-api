@@ -1,7 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using RouteOptimizationApi.Common;
-using RouteOptimizationApi.Models;
+﻿using RouteOptimizationApi.Models;
 
 namespace RouteOptimizationApi.Services;
 
@@ -104,9 +101,9 @@ public static partial class TspAlgorithm
         RouteUnionFind routeUnion = new(totalDeliveries);
 
         // Insert merges by descending savings (largest first).
-        foreach (SavingPair pair in finalSavings)
+        foreach (SavingPair savingPair in finalSavings)
         {
-            routeUnion.AttemptMerge(pair.IndexA, pair.IndexB);
+            routeUnion.AttemptMerge(savingPair.IndexA, savingPair.IndexB);
         }
 
 
