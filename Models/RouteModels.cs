@@ -3,10 +3,10 @@ namespace RouteOptimizationApi.Models;
 public class DriverRoute
 {
     public int DriverId { get; set; }
-    public List<Delivery> RoutePoints { get; set; } = new List<Delivery>();
-    public List<int> DeliveryIds { get; set; } = new List<int>();
+    public List<Delivery> RoutePoints { get; set; } = [];
+    public List<int> DeliveryIds { get; set; } = [];
     public double Distance { get; set; }
-    public List<int> OriginalIndices { get; set; } = new List<int>();
+    public List<int> OriginalIndices { get; set; } = [];
 }
 
 public class Delivery

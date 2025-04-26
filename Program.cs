@@ -110,8 +110,7 @@ public class Program
                 finalCombinedResult = bestPathResult;
                 finalCombinedResult.BestMethod = bestMethod;
 
-                List<Delivery> combinedDeliveries = new List<Delivery> { TspAlgorithm.Depot };
-                combinedDeliveries.AddRange(allDeliveries);
+                List<Delivery> combinedDeliveries = [TspAlgorithm.Depot, .. allDeliveries];
                 finalCombinedResult.GeneratedDeliveries = combinedDeliveries;
 
                 finalCombinedResult.InitialDistanceNN = nearestNeighborResult.InitialDistanceNN;
@@ -153,7 +152,7 @@ public class Program
                 }
                 else
                 {
-                    finalCombinedResult.DriverRoutes = new List<DriverRoute>();
+                    finalCombinedResult.DriverRoutes = [];
                     await SendProgress("DRIVERS", "[No driver routes generated]", "warning");
                 }
 
@@ -310,7 +309,7 @@ public class Program
     /// </summary>
     private static List<DriverRoute> PopulateDriverRoutes(List<Delivery> optimizedRoute, int[] cutIndices, int driverCount)
     {
-        List<DriverRoute> driverRoutes = new List<DriverRoute>();
+        List<DriverRoute> driverRoutes = [];
         if (optimizedRoute == null || optimizedRoute.Count < 2) return driverRoutes;
 
         int deliveryCountInRoute = optimizedRoute.Count - 2;

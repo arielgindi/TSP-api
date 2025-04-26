@@ -27,10 +27,10 @@ public static partial class TspAlgorithm
     /// </summary>
     public static List<Delivery> GenerateRandomDeliveries(int count, int minCoord, int maxCoord)
     {
-        if (count <= 0) return new List<Delivery>();
+        if (count <= 0) return [];
 
         List<Delivery> deliveries = new List<Delivery>(count);
-        HashSet<(int, int)> usedCoordinates = new HashSet<(int, int)> { (Depot.X, Depot.Y) };
+        HashSet<(int, int)> usedCoordinates = [(Depot.X, Depot.Y)];
 
         // availableSlots is the total number of unique coordinate pairs 
         // in the inclusive range [minCoord, maxCoord] minus 1 for the depot's own coordinates.
@@ -69,10 +69,10 @@ public static partial class TspAlgorithm
     {
         if (initialRoute == null || initialRoute.Count < 4)
         {
-            return initialRoute ?? new List<Delivery>();
+            return initialRoute ?? [];
         }
 
-        List<Delivery> currentRoute = new List<Delivery>(initialRoute);
+        List<Delivery> currentRoute = [.. initialRoute];
         bool improvement = true;
         int maxIterations = Constants.Max2OptIterations;
         int iterationCount = 0;
@@ -278,7 +278,7 @@ public static partial class TspAlgorithm
     {
         minMakespan = 0;
         double maxSingle = 0;
-        List<int> cuts = new List<int>();
+        List<int> cuts = [];
 
         for (int i = 1; i <= deliveryCount; i++)
         {
@@ -300,7 +300,7 @@ public static partial class TspAlgorithm
     /// </summary>
     private static int[] PadCutIndices(int[] currentCuts, int numberOfDrivers, int deliveryCount)
     {
-        List<int> paddedList = new List<int>(currentCuts);
+        List<int> paddedList = [.. currentCuts];
 
         while (paddedList.Count < numberOfDrivers - 1)
         {
@@ -320,7 +320,7 @@ public static partial class TspAlgorithm
         int totalDeliveries = route.Count - 2;
         int usedDriverCount = 1;
         int start = 1;
-        List<int> subRouteCuts = new List<int>();
+        List<int> subRouteCuts = [];
 
         for (int i = 1; i <= totalDeliveries; i++)
         {
