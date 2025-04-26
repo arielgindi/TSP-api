@@ -50,7 +50,7 @@ public class Program
             Stopwatch overallStopwatch = Stopwatch.StartNew();
             OptimizationResult nearestNeighborResult = null;
             OptimizationResult clarkeWrightResult = null;
-            OptimizationResult finalCombinedResult = new OptimizationResult();
+            OptimizationResult finalCombinedResult = new();
 
             async Task SendProgress(string step, string msg, string style, object data = null, bool clear = false)
             {
@@ -205,7 +205,7 @@ public class Program
         IHubContext<OptimizationHub> hubContext
     )
     {
-        OptimizationResult pathResult = new OptimizationResult();
+        OptimizationResult pathResult = new();
         Stopwatch totalPathWatch = Stopwatch.StartNew();
         string fullMethodName = algorithmLabel == "NN" ? "Nearest Neighbor" : "Clarke-Wright Savings";
 
@@ -254,7 +254,7 @@ public class Program
 
         double distanceImprovement = initialDistance - optimizedDistance;
         double improvementPercentage = initialDistance > Constants.Epsilon
-            ? (distanceImprovement / initialDistance) * 100.0
+            ? distanceImprovement / initialDistance * 100.0
             : 0;
 
         await SendProgress(algorithmLabel + ".2", "✔ " + algorithmLabel + " route optimized.", "success", new { Time = FormatTimeSpan(optSw.Elapsed) });
@@ -324,7 +324,7 @@ public class Program
 
         for (int driverIndex = 1; driverIndex <= driverCount; driverIndex++)
         {
-            DriverRoute driverRoute = new DriverRoute { DriverId = driverIndex };
+            DriverRoute driverRoute = new() { DriverId = driverIndex };
 
             int routeStart = currentIndex + 1;
             int routeEnd = (driverIndex - 1) < effectiveCuts.Length
@@ -443,7 +443,7 @@ public class Program
     /// </summary>
     private static DriverRoute CreateEmptyDriverRoute(int driverId, int routeLength)
     {
-        DriverRoute empty = new DriverRoute { DriverId = driverId };
+        DriverRoute empty = new() { DriverId = driverId };
         empty.RoutePoints.Add(TspAlgorithm.Depot);
         empty.DeliveryIds.Add(TspAlgorithm.Depot.Id);
         empty.OriginalIndices.Add(0);

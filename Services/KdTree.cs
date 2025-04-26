@@ -69,7 +69,7 @@ public sealed class KdTree
     /// <summary>
     /// True if there is at least one unvisited Delivery left in the tree.
     /// </summary>
-    public bool HasUnvisited => (_globalUnvisited > 0);
+    public bool HasUnvisited => _globalUnvisited > 0;
 
     /// <summary>
     /// Finds and marks the nearest unvisited point to 'query' as visited.

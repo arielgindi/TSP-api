@@ -9,12 +9,12 @@ namespace RouteOptimizationApi.Services;
 /// </summary>
 public static partial class TspAlgorithm
 {
-    private static readonly Random randomGenerator = new Random();
+    private static readonly Random randomGenerator = new();
 
     /// <summary>
     /// Special delivery that represents the depot (start/end point).
     /// </summary>
-    public static readonly Delivery Depot = new Delivery(0, 0, 0);
+    public static readonly Delivery Depot = new(0, 0, 0);
 
     /// <summary>
     /// Used to report progress when searching for the best route partition.
@@ -29,7 +29,7 @@ public static partial class TspAlgorithm
     {
         if (count <= 0) return [];
 
-        List<Delivery> deliveries = new List<Delivery>(count);
+        List<Delivery> deliveries = new(count);
         HashSet<(int, int)> usedCoordinates = [(Depot.X, Depot.Y)];
 
         // availableSlots is the total number of unique coordinate pairs 

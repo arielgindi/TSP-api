@@ -68,7 +68,7 @@ public static partial class TspAlgorithm
 
         // 2) Gather all positive savings in a single pass (O(n²)).
         //    We store them in an array for better performance.
-        int maxPairs = (totalDeliveries * (totalDeliveries - 1)) / 2;
+        int maxPairs = totalDeliveries * (totalDeliveries - 1) / 2;
         SavingPair[] savingsBuffer = new SavingPair[maxPairs];
         int validSavingsCount = 0;
 
@@ -101,14 +101,14 @@ public static partial class TspAlgorithm
 
         // 4) Use union-find for merges in O(1).
         //    Each delivery starts as its own “route” with one node.
-        RouteUnionFind routeUnion = new RouteUnionFind(totalDeliveries);
+        RouteUnionFind routeUnion = new(totalDeliveries);
 
         // Insert merges by descending savings (largest first).
-        for (int index = 0; index < finalSavings.Length; index++)
+        foreach (SavingPair pair in finalSavings)
         {
-            SavingPair pair = finalSavings[index];
             routeUnion.AttemptMerge(pair.IndexA, pair.IndexB);
         }
+
 
         // 5) Construct final route from the union-find chains.
         List<Delivery> finalRoute = routeUnion.BuildRoute(deliveryArray);
@@ -266,8 +266,8 @@ public static partial class TspAlgorithm
 
             if (leaderA == leaderB) return; // Already in the same route.
 
-            bool forwardMerge = (routeTail[leaderA] == firstIndex && routeHead[leaderB] == secondIndex);
-            bool reverseMerge = (routeTail[leaderB] == secondIndex && routeHead[leaderA] == firstIndex);
+            bool forwardMerge = routeTail[leaderA] == firstIndex && routeHead[leaderB] == secondIndex;
+            bool reverseMerge = routeTail[leaderB] == secondIndex && routeHead[leaderA] == firstIndex;
 
             if (forwardMerge)
             {
