@@ -1,305 +1,366 @@
+ï»¿using System;
+using System.Collections.Generic;
+using RouteOptimizationApi.Common;
 using RouteOptimizationApi.Models;
 
 namespace RouteOptimizationApi.Services;
 
 /// <summary>
-/// Partial class implementing a Clarke-Wright Savings method in O(n²) time.
-/// Uses a union-find structure for instant merges and bucket-sort to handle
-/// the savings array efficiently without O(n² log(n²)) overhead.
+/// Provides a Clarke-Wright Savings implementation in O(nÂ²) time,
+/// using an optimized savings computation and a least-significant-digit
+/// (LSD) radix sort for double values.
+///
+/// Merges are done with union-find in O(1) per merge, ensuring overall O(nÂ²).
 /// </summary>
 public static partial class TspAlgorithm
 {
     /// <summary>
-    /// Constructs a Traveling Salesman route using the Clarke-Wright Savings
-    /// approach in O(n²) time. It merges delivery routes instantly with union-find
-    /// and sorts savings in near-linear time using a bucket-based method.
+    /// Builds a TSP route using the Clarke-Wright method.
+    /// This uses:
+    /// 1) A single pass to gather all valid (positive) savings,
+    /// 2) An LSD radix sort on double values for sorting in ascending order,
+    ///    followed by reversing for descending order,
+    /// 3) A union-find structure to merge route segments in constant time.
+    ///
+    /// Example:
+    /// --------
+    ///  var deliveries = new List<Delivery> { new Delivery(1,10,10), new Delivery(2,20,20), ... };
+    ///  List<Delivery> bestRoute = TspAlgorithm.ConstructClarkeWrightRoute(deliveries);
+    ///
+    /// Complexity:
+    ///  - O(nÂ²) to compute all pairwise savings.
+    ///  - O(nÂ²) to LSD-radix-sort the savings.
+    ///  - O(nÂ²) merges at O(1) each.
     /// </summary>
-    public static List<Delivery> ConstructClarkeWrightRoute(List<Delivery> deliveryList)
+    public static List<Delivery> ConstructClarkeWrightRoute(List<Delivery> deliveries)
     {
-        // Handle trivial cases (0 or 1 delivery).
-        if (deliveryList == null || deliveryList.Count == 0)
+        // Handle trivial cases.
+        if (deliveries == null || deliveries.Count == 0)
         {
-            List<Delivery> emptyRoute = [Depot, Depot];
-            return emptyRoute;
+            return [Depot, Depot];
         }
-        if (deliveryList.Count == 1)
+        if (deliveries.Count == 1)
         {
-            List<Delivery> singleRoute = [Depot, deliveryList[0], Depot];
-            return singleRoute;
+            return [Depot, deliveries[0], Depot];
         }
 
-        // 1) Convert deliveries to an array for simpler indexing.
-        Delivery[] deliveriesArray = deliveryList.ToArray();
-        int deliveryCount = deliveriesArray.Length;
+        // Convert all deliveries to an array for quick indexing.
+        Delivery[] deliveryArray = deliveries.ToArray();
+        int totalDeliveries = deliveryArray.Length;
 
-        // 2) Precompute all required distances in O(n²):
-        //    (a) Distance from Depot to each delivery
-        //    (b) Distances among all deliveries
-        double[] distancesFromDepot = new double[deliveryCount];
-        for (int i = 0; i < deliveryCount; i++)
+        // 1) Precompute distances in O(nÂ²).
+        double[] distanceFromDepot = new double[totalDeliveries];
+        for (int deliveryIndex = 0; deliveryIndex < totalDeliveries; deliveryIndex++)
         {
-            distancesFromDepot[i] = CalculateEuclideanDistance(Depot, deliveriesArray[i]);
+            distanceFromDepot[deliveryIndex] = CalculateEuclideanDistance(Depot, deliveryArray[deliveryIndex]);
         }
 
-        double[,] distancesBetweenDeliveries = new double[deliveryCount, deliveryCount];
-        for (int i = 0; i < deliveryCount; i++)
+        double[,] distanceBetweenDeliveries = new double[totalDeliveries, totalDeliveries];
+        for (int rowIndex = 0; rowIndex < totalDeliveries; rowIndex++)
         {
-            for (int j = i + 1; j < deliveryCount; j++)
+            for (int colIndex = rowIndex + 1; colIndex < totalDeliveries; colIndex++)
             {
-                double dist = CalculateEuclideanDistance(deliveriesArray[i], deliveriesArray[j]);
-                distancesBetweenDeliveries[i, j] = dist;
-                distancesBetweenDeliveries[j, i] = dist;
+                double currentDistance = CalculateEuclideanDistance(deliveryArray[rowIndex], deliveryArray[colIndex]);
+                distanceBetweenDeliveries[rowIndex, colIndex] = currentDistance;
+                distanceBetweenDeliveries[colIndex, rowIndex] = currentDistance;
             }
         }
 
-        // 3) Compute all savings (i, j) in O(n²). Keep track of max to set up bucket range.
-        //    Savings = Dist(Depot, i) + Dist(Depot, j) - Dist(i, j).
-        List<SavingRecord> allSavings = new List<SavingRecord>(deliveryCount * (deliveryCount - 1) / 2);
-        double maxSavingValue = 0.0;
+        // 2) Gather all positive savings in a single pass (O(nÂ²)).
+        //    We store them in an array for better performance.
+        int maxPairs = (totalDeliveries * (totalDeliveries - 1)) / 2;
+        SavingPair[] savingsBuffer = new SavingPair[maxPairs];
+        int validSavingsCount = 0;
 
-        for (int i = 0; i < deliveryCount; i++)
+        for (int firstDeliveryIndex = 0; firstDeliveryIndex < totalDeliveries; firstDeliveryIndex++)
         {
-            for (int j = i + 1; j < deliveryCount; j++)
+            double depotDistanceFirst = distanceFromDepot[firstDeliveryIndex];
+            for (int secondDeliveryIndex = firstDeliveryIndex + 1; secondDeliveryIndex < totalDeliveries; secondDeliveryIndex++)
             {
-                double currentSaving = distancesFromDepot[i]
-                                     + distancesFromDepot[j]
-                                     - distancesBetweenDeliveries[i, j];
-                // Only consider positive savings
-                if (currentSaving > 0.0)
+                double savingValue = depotDistanceFirst
+                                     + distanceFromDepot[secondDeliveryIndex]
+                                     - distanceBetweenDeliveries[firstDeliveryIndex, secondDeliveryIndex];
+
+                // Only keep positive (beneficial) savings.
+                if (savingValue > 0.0)
                 {
-                    allSavings.Add(new SavingRecord(i, j, currentSaving));
-                    if (currentSaving > maxSavingValue)
-                    {
-                        maxSavingValue = currentSaving;
-                    }
+                    savingsBuffer[validSavingsCount] =
+                        new SavingPair(firstDeliveryIndex, secondDeliveryIndex, savingValue);
+                    validSavingsCount++;
                 }
             }
         }
 
-        // 4) Sort the savings in descending order using a bucket approach to avoid O(n² log n²).
-        List<SavingRecord> sortedSavings = SortSavingsDescendingUsingBuckets(allSavings, maxSavingValue);
+        // Slice out the valid portion.
+        SavingPair[] finalSavings = new SavingPair[validSavingsCount];
+        Array.Copy(savingsBuffer, finalSavings, validSavingsCount);
 
-        // 5) Union-find for merging routes in constant time per pair.
-        DeliveryRouteUnionFind unionFindRoutes = new DeliveryRouteUnionFind(deliveryCount);
+        // 3) Sort savings in ascending order using LSD Radix, then reverse for descending.
+        LSDSortDoubleAscending(finalSavings);
+        ReverseArray(finalSavings);
 
-        // 6) Merge routes by highest savings first.
-        for (int s = 0; s < sortedSavings.Count; s++)
+        // 4) Use union-find for merges in O(1).
+        //    Each delivery starts as its own â€œrouteâ€ with one node.
+        RouteUnionFind routeUnion = new RouteUnionFind(totalDeliveries);
+
+        // Insert merges by descending savings (largest first).
+        for (int index = 0; index < finalSavings.Length; index++)
         {
-            SavingRecord currentPair = sortedSavings[s];
-            unionFindRoutes.TryMergeRoutes(currentPair.FirstDeliveryIndex, currentPair.SecondDeliveryIndex);
+            SavingPair pair = finalSavings[index];
+            routeUnion.AttemptMerge(pair.IndexA, pair.IndexB);
         }
 
-        // 7) Build final path from merged chains.
-        List<Delivery> finalRouteList = unionFindRoutes.BuildFinalRoute(deliveriesArray);
+        // 5) Construct final route from the union-find chains.
+        List<Delivery> finalRoute = routeUnion.BuildRoute(deliveryArray);
 
-        // 8) Depot at the start and end.
-        finalRouteList.Insert(0, Depot);
-        finalRouteList.Add(Depot);
+        // Add depot at start and end.
+        finalRoute.Insert(0, Depot);
+        finalRoute.Add(Depot);
 
-        return finalRouteList;
+        return finalRoute;
     }
 
     /// <summary>
-    /// Bucket-sorts all savings in descending order.
-    /// The range is determined by 'maximumSaving', which is taken from the largest
-    /// savings value encountered. Adjust buffer sizes as needed for your data.
+    /// Reverses the given array in place to convert ascending order to descending.
+    ///
+    /// Example:
+    /// --------
+    ///   var pairs = new SavingPair[] { new (0,1,10.5), new (0,2,11.2) };
+    ///   ReverseArray(pairs);
+    ///   // now largest saving is first
     /// </summary>
-    private static List<SavingRecord> SortSavingsDescendingUsingBuckets(
-        List<SavingRecord> savings,
-        double maximumSaving
-    )
+    private static void ReverseArray(SavingPair[] array)
     {
-        // Decide an integer range for bucket indices. If max is 30000.99 => 30001 buckets, etc.
-        // In practice, you could clamp or expand this to match your coordinate range.
-        int bucketCount = (int)Math.Ceiling(maximumSaving);
-        if (bucketCount < 1)
+        int leftIndex = 0;
+        int rightIndex = array.Length - 1;
+        while (leftIndex < rightIndex)
         {
-            bucketCount = 1;
+            SavingPair temp = array[leftIndex];
+            array[leftIndex] = array[rightIndex];
+            array[rightIndex] = temp;
+            leftIndex++;
+            rightIndex--;
         }
-
-        // Create buckets
-        List<SavingRecord>[] buckets = new List<SavingRecord>[bucketCount + 1];
-        for (int i = 0; i < buckets.Length; i++)
-        {
-            buckets[i] = [];
-        }
-
-        // Distribute each saving into its bucket (rounded).
-        for (int i = 0; i < savings.Count; i++)
-        {
-            double value = savings[i].SavingValue;
-            int bucketIndex = (int)Math.Round(value);
-            if (bucketIndex < 0)
-            {
-                bucketIndex = 0;
-            }
-            if (bucketIndex > bucketCount)
-            {
-                bucketIndex = bucketCount;
-            }
-            buckets[bucketIndex].Add(savings[i]);
-        }
-
-        // Collect from highest bucket to lowest for descending order.
-        List<SavingRecord> sortedList = new List<SavingRecord>(savings.Count);
-        for (int idx = bucketCount; idx >= 0; idx--)
-        {
-            List<SavingRecord> currentBucket = buckets[idx];
-            for (int b = 0; b < currentBucket.Count; b++)
-            {
-                sortedList.Add(currentBucket[b]);
-            }
-        }
-
-        return sortedList;
     }
 
     /// <summary>
-    /// Union-Find structure that keeps track of route heads/tails so Clarke-Wright merges
-    /// (tail->head or head->tail) happen in O(1) time. 
+    /// Sorts the array of SavingPair by ascending 'SavingValue' using a stable LSD (least significant digit)
+    /// radix sort on the 64-bit representation of doubles. This preserves exact ordering
+    /// for positive doubles by flipping the sign bit.
+    ///
+    /// Example:
+    /// --------
+    ///   var savings = new SavingPair[] { new (0,1,  50.0), new (0,2,  10.0), new (1,2, 200.0) };
+    ///   LSDSortDoubleAscending(savings);
+    ///   // now sorted ascending by 'SavingValue': [ (0,2,10.0), (0,1,50.0), (1,2,200.0) ]
     /// </summary>
-    private sealed class DeliveryRouteUnionFind
+    private static void LSDSortDoubleAscending(SavingPair[] array)
     {
-        private int[] parentSet;
-        private int[] setRank;
+        int length = array.Length;
+        if (length <= 1) return;
 
-        // headOfRoute[leader] is the first node's index in that route
-        // tailOfRoute[leader] is the last node's index in that route
-        private int[] headOfRoute;
-        private int[] tailOfRoute;
+        SavingPair[] buffer = new SavingPair[length];
 
-        // nextNodeIndex[i] points to the next node in i's chain.
-        // -1 means this node is a tail.
-        private int[] nextNodeIndex;
-
-        public DeliveryRouteUnionFind(int size)
+        // Perform 8 passes (one byte per pass in 64-bit double).
+        for (int shift = 0; shift < 64; shift += 8)
         {
-            parentSet = new int[size];
-            setRank = new int[size];
-            headOfRoute = new int[size];
-            tailOfRoute = new int[size];
-            nextNodeIndex = new int[size];
-
-            // Initially, each delivery is its own route: itself as head & tail.
-            for (int i = 0; i < size; i++)
+            // Count the frequency of each byte value (0..255).
+            int[] count = new int[256];
+            for (int recordIndex = 0; recordIndex < length; recordIndex++)
             {
-                parentSet[i] = i;
-                setRank[i] = 0;
-                headOfRoute[i] = i;
-                tailOfRoute[i] = i;
-                nextNodeIndex[i] = -1;
+                ulong bits = DoubleToSortableBits(array[recordIndex].SavingValue);
+                int bucket = (int)((bits >> shift) & 0xFF);
+                count[bucket]++;
+            }
+
+            // Create prefix sums for stable distribution.
+            int[] prefixSum = new int[256];
+            prefixSum[0] = 0;
+            for (int bucketIndex = 1; bucketIndex < 256; bucketIndex++)
+            {
+                prefixSum[bucketIndex] = prefixSum[bucketIndex - 1] + count[bucketIndex - 1];
+            }
+
+            // Distribute into the buffer array in stable order.
+            for (int recordIndex = 0; recordIndex < length; recordIndex++)
+            {
+                ulong bits = DoubleToSortableBits(array[recordIndex].SavingValue);
+                int bucket = (int)((bits >> shift) & 0xFF);
+                int destinationIndex = prefixSum[bucket]++;
+                buffer[destinationIndex] = array[recordIndex];
+            }
+
+            // Copy back for next pass.
+            Array.Copy(buffer, array, length);
+        }
+    }
+
+    /// <summary>
+    /// Converts a positive double into a sortable unsigned 64-bit pattern
+    /// by flipping the sign bit. This ensures that ascending numeric values
+    /// map to ascending integer order in an unsigned sense.
+    /// 
+    /// Example:
+    /// --------
+    ///   double val = 100.0;
+    ///   ulong bits = DoubleToSortableBits(val);
+    ///   // bits is a monotonic representation used in LSD sorting
+    /// </summary>
+    private static ulong DoubleToSortableBits(double value)
+    {
+        long rawBits = BitConverter.DoubleToInt64Bits(value);
+        const long SignBitMask = unchecked((long)0x8000000000000000);
+        long flipped = rawBits ^ SignBitMask;
+        return (ulong)flipped;
+    }
+
+
+    /// <summary>
+    /// Represents a specialized union-find structure for Clarke-Wright routes.
+    /// Each delivery starts as its own route. We track the "head" and "tail" of each route,
+    /// allowing merges (tail->head or head->tail) in constant time.
+    /// </summary>
+    private sealed class RouteUnionFind
+    {
+        private readonly int[] parent;
+        private readonly int[] rank;
+
+        private readonly int[] routeHead;
+        private readonly int[] routeTail;
+        private readonly int[] nextIndexInRoute;
+
+        public RouteUnionFind(int size)
+        {
+            parent = new int[size];
+            rank = new int[size];
+            routeHead = new int[size];
+            routeTail = new int[size];
+            nextIndexInRoute = new int[size];
+
+            // Initialize each node as a separate "route".
+            for (int current = 0; current < size; current++)
+            {
+                parent[current] = current;
+                rank[current] = 0;
+                routeHead[current] = current;
+                routeTail[current] = current;
+                nextIndexInRoute[current] = -1;
             }
         }
 
         /// <summary>
-        /// Attempts to merge two routes if one index is a tail and the other is a head.
+        /// Tries to merge the routes of 'firstIndex' and 'secondIndex' if one is the tail
+        /// of its route and the other is the head of its route.
+        ///
+        /// No complexity beyond O(1) merges thanks to union-find plus head/tail references.
+        ///
+        /// Example:
+        /// --------
+        ///   AttemptMerge(5,9);
+        ///   // If 5 is route A's tail and 9 is route B's head, merges them.
         /// </summary>
-        public void TryMergeRoutes(int firstDeliveryIndex, int secondDeliveryIndex)
+        public void AttemptMerge(int firstIndex, int secondIndex)
         {
-            int leaderA = FindLeader(firstDeliveryIndex);
-            int leaderB = FindLeader(secondDeliveryIndex);
+            int leaderA = FindLeader(firstIndex);
+            int leaderB = FindLeader(secondIndex);
 
-            // If both deliveries are already in the same route, ignore.
-            if (leaderA == leaderB)
+            if (leaderA == leaderB) return; // Already in the same route.
+
+            bool forwardMerge = (routeTail[leaderA] == firstIndex && routeHead[leaderB] == secondIndex);
+            bool reverseMerge = (routeTail[leaderB] == secondIndex && routeHead[leaderA] == firstIndex);
+
+            if (forwardMerge)
             {
-                return;
-            }
-
-            // Check if "first" is a tail and "second" is a head
-            bool canMergeForward = (tailOfRoute[leaderA] == firstDeliveryIndex
-                                 && headOfRoute[leaderB] == secondDeliveryIndex);
-
-            // Check if "second" is a tail and "first" is a head
-            bool canMergeReverse = (tailOfRoute[leaderB] == secondDeliveryIndex
-                                 && headOfRoute[leaderA] == firstDeliveryIndex);
-
-            if (canMergeForward)
-            {
-                // Link A's tail -> B's head
-                nextNodeIndex[firstDeliveryIndex] = secondDeliveryIndex;
+                // Connect route A's tail to route B's head.
+                nextIndexInRoute[firstIndex] = secondIndex;
                 Union(leaderA, leaderB);
 
-                int newLeader = FindLeader(firstDeliveryIndex);
-                headOfRoute[newLeader] = headOfRoute[leaderA];
-                tailOfRoute[newLeader] = tailOfRoute[leaderB];
+                int newLeader = FindLeader(firstIndex);
+                routeHead[newLeader] = routeHead[leaderA];
+                routeTail[newLeader] = routeTail[leaderB];
             }
-            else if (canMergeReverse)
+            else if (reverseMerge)
             {
-                // Link B's tail -> A's head
-                nextNodeIndex[secondDeliveryIndex] = firstDeliveryIndex;
+                // Connect route B's tail to route A's head.
+                nextIndexInRoute[secondIndex] = firstIndex;
                 Union(leaderB, leaderA);
 
-                int newLeader = FindLeader(secondDeliveryIndex);
-                headOfRoute[newLeader] = headOfRoute[leaderB];
-                tailOfRoute[newLeader] = tailOfRoute[leaderA];
+                int newLeader = FindLeader(secondIndex);
+                routeHead[newLeader] = routeHead[leaderB];
+                routeTail[newLeader] = routeTail[leaderA];
             }
         }
 
         /// <summary>
-        /// After all merges, builds the final route by traversing each disjoint chain
-        /// from head->tail. Multiple chains, if any, are appended in arbitrary order.
+        /// Builds the final sequence of deliveries by traversing each route from head->tail.
+        /// If multiple routes remain disconnected, they are appended in arbitrary order.
+        ///
+        /// Example:
+        /// --------
+        ///   List&lt;Delivery&gt; route = BuildRoute(deliveryArray);
+        ///   // route now is a single chain of all merged deliveries
         /// </summary>
-        public List<Delivery> BuildFinalRoute(Delivery[] deliveriesArray)
+        public List<Delivery> BuildRoute(Delivery[] deliveryArray)
         {
-            List<Delivery> mergedRoute = [];
+            List<Delivery> assembledRoute = [];
             HashSet<int> visitedLeaders = [];
 
-            for (int i = 0; i < deliveriesArray.Length; i++)
+            for (int node = 0; node < deliveryArray.Length; node++)
             {
-                int currentLeader = FindLeader(i);
-                if (!visitedLeaders.Contains(currentLeader))
+                int leader = FindLeader(node);
+                if (!visitedLeaders.Contains(leader))
                 {
-                    visitedLeaders.Add(currentLeader);
+                    visitedLeaders.Add(leader);
 
-                    // Traverse from head to tail for this route.
-                    int head = headOfRoute[currentLeader];
-                    int currentNode = head;
+                    int currentNode = routeHead[leader];
                     while (currentNode != -1)
                     {
-                        mergedRoute.Add(deliveriesArray[currentNode]);
-                        currentNode = nextNodeIndex[currentNode];
+                        assembledRoute.Add(deliveryArray[currentNode]);
+                        currentNode = nextIndexInRoute[currentNode];
                     }
                 }
             }
-
-            return mergedRoute;
+            return assembledRoute;
         }
 
-        /// <summary>
-        /// Finds the representative leader with path compression for efficiency.
-        /// </summary>
         private int FindLeader(int node)
         {
-            if (parentSet[node] != node)
+            // Path compression for O(Î±(n)) ~ O(1).
+            if (parent[node] != node)
             {
-                parentSet[node] = FindLeader(parentSet[node]);
+                parent[node] = FindLeader(parent[node]);
             }
-            return parentSet[node];
+            return parent[node];
         }
 
-        /// <summary>
-        /// Standard union-by-rank to keep sets shallow.
-        /// </summary>
         private void Union(int rootA, int rootB)
         {
-            if (setRank[rootA] < setRank[rootB])
+            // Union by rank to keep trees shallow.
+            if (rank[rootA] < rank[rootB])
             {
-                parentSet[rootA] = rootB;
+                parent[rootA] = rootB;
             }
-            else if (setRank[rootA] > setRank[rootB])
+            else if (rank[rootA] > rank[rootB])
             {
-                parentSet[rootB] = rootA;
+                parent[rootB] = rootA;
             }
             else
             {
-                parentSet[rootB] = rootA;
-                setRank[rootA]++;
+                parent[rootB] = rootA;
+                rank[rootA]++;
             }
         }
     }
 
+  
+
     /// <summary>
-    /// Simple record for storing a pair of deliveries (by index) and their computed saving value.
+    /// Represents a pair of delivery indices plus the computed saving value.
+    ///
+    /// Example:
+    /// --------
+    ///   var sp = new SavingPair(3, 7, 120.5);
+    ///   // means merging deliveries 3 and 7 yields a saving of 120.5
     /// </summary>
-    private record SavingRecord(int FirstDeliveryIndex, int SecondDeliveryIndex, double SavingValue);
+    private record SavingPair(int IndexA, int IndexB, double SavingValue);
 }
