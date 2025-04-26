@@ -21,7 +21,6 @@ public static partial class TspAlgorithm
     /// </summary>
     public delegate void ProgressReporter(long itemsProcessed);
 
-    private record Saving(int FirstDeliveryId, int SecondDeliveryId, double Value);
 
     /// <summary>
     /// Generates a list of random deliveries within a specified coordinate range, ensuring no duplicates.
