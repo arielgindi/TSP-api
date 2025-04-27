@@ -391,31 +391,41 @@ public class Program
     }
 
     /// <summary>
-    /// Validates basic request constraints and sends warnings if they are not met.
+    /// Validates the incoming optimization request, ensuring parameters make sense before starting the route calculation.
+    /// Sends warnings to the client if certain conditions might lead to unexpected behavior.
     /// </summary>
-    private static void ValidateRequest(OptimizationRequest request, IHubContext<OptimizationHub> hubContext, string connectionId)
+    /// <param name="request">The incoming request containing deliveries, drivers, and coordinate ranges.</param>
+    /// <param name="hubContext">SignalR hub context used to send real-time updates and warnings to the client.</param>
+    /// <param name="connectionId">The SignalR connection ID of the client receiving progress updates.</param>
+    /// <exception cref="ArgumentException">Thrown if input parameters are invalid (e.g., negative deliveries/drivers or invalid coordinates).</exception>
+    private static async Task ValidateRequestAsync(
+        OptimizationRequest request,
+        IHubContext<OptimizationHub> hubContext,
+        string connectionId)
     {
-        if (request.NumberOfDeliveries <= 0 || request.NumberOfDrivers <= 0)
-        {
-            throw new ArgumentException("Number of deliveries and drivers must be positive.");
-        }
+        if (request.NumberOfDeliveries <= 0)
+            throw new ArgumentException("Number of deliveries must be greater than zero.");
+
+        if (request.NumberOfDrivers <= 0)
+            throw new ArgumentException("Number of drivers must be greater than zero.");
+
         if (request.MinCoordinate >= request.MaxCoordinate)
+            throw new ArgumentException("Minimum coordinate must be less than maximum coordinate.");
+
+        if (request.NumberOfDeliveries < request.NumberOfDrivers && !string.IsNullOrEmpty(connectionId))
         {
-            throw new ArgumentException("Min coordinate must be less than Max coordinate.");
-        }
-        if (request.NumberOfDeliveries < request.NumberOfDrivers)
-        {
-            if (!string.IsNullOrEmpty(connectionId))
-            {
-                _ = hubContext.Clients.Client(connectionId).SendAsync("ReceiveMessage", new ProgressUpdate(
-                    "SETUP",
-                    "Warning: Fewer deliveries (" + request.NumberOfDeliveries + ") than drivers (" + request.NumberOfDrivers + "). Some drivers may have no route.",
-                    "warning",
-                    null
-                ));
-            }
+            await hubContext.Clients.Client(connectionId).SendAsync("ReceiveMessage", new ProgressUpdate(
+                "SETUP",
+                $"Warning: You have more drivers ({request.NumberOfDrivers}) " +
+                $"than deliveries ({request.NumberOfDeliveries})." +
+                $" Some drivers might not have a route.",
+                "warning",
+                null,    // Data (no additional data to send)
+                false    // ClearPreviousProgress (no need to clear previous messages)
+            ));
         }
     }
+
 
     /// <summary>
     /// Constructs a shorter or truncated route chain display for progress messages.

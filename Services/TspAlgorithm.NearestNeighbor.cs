@@ -1,51 +1,65 @@
-using RouteOptimizationApi.Models;
+﻿using RouteOptimizationApi.Models;
 
 namespace RouteOptimizationApi.Services;
 
 /// <summary>
-/// Partial class: Nearest Neighbor TSP using a KD-Tree for O(n log n) performance.
+/// Implements the Nearest Neighbor heuristic for solving the Traveling Salesman Problem (TSP),
+/// utilizing a KD-Tree for efficient nearest-point queries (O(n log n) complexity).
 /// </summary>
 public static partial class TspAlgorithm
 {
     /// <summary>
-    /// Constructs a TSP route by repeatedly picking the nearest unvisited delivery
-    /// (via KD-Tree) from the current location. Returns depot->deliveries->depot.
+    /// Constructs an optimized route starting from the depot, visiting each delivery exactly once by 
+    /// repeatedly choosing the closest unvisited delivery, and finally returning to the depot.
     /// </summary>
+    /// <param name="allDeliveries">List of deliveries to include in the route.</param>
+    /// <returns>An ordered list representing the optimized route (Depot → deliveries → Depot).</returns>
     public static List<Delivery> ConstructNearestNeighborRoute(List<Delivery> allDeliveries)
     {
-        // Always start at the depot
-        var route = new List<Delivery> { Depot };
+        // Initialize the route starting from the depot
+        List<Delivery> route = [Depot];
 
-        // If no deliveries given, just return depot->depot
-        if (allDeliveries == null || allDeliveries.Count == 0)
+        // No deliveries to handle; return route as Depot → Depot
+        if (allDeliveries is null || allDeliveries.Count == 0)
         {
             route.Add(Depot);
             return route;
         }
 
-        // Build KD-Tree from all deliveries (ignoring Id=0)
-        var kdTree = new KdTree(allDeliveries);
+        // Build KD-Tree for efficient nearest neighbor queries
+        KdTree kdTree = new(allDeliveries);
 
-        // If no unvisited deliveries, we're done
+        // If the KD-Tree has no valid (unvisited) deliveries, end the route at the depot
         if (!kdTree.HasUnvisited)
         {
             route.Add(Depot);
             return route;
         }
 
-        // Walk through all unvisited deliveries, always choosing the nearest
+        // Iteratively pick the closest unvisited delivery
         Delivery current = Depot;
+        Delivery? nextDelivery;
+
         while (kdTree.HasUnvisited)
         {
-            Delivery? next = kdTree.PopNearest(current);
-            if (next == null) break; // no more unvisited or unexpected
+            nextDelivery = kdTree.PopNearest(current);
 
-            route.Add(next);
-            current = next;
+            // If no next delivery is available, end the loop naturally (without break)
+            if (nextDelivery is not null)
+            {
+                route.Add(nextDelivery);
+                current = nextDelivery;
+            }
+            else
+            {
+                // No more valid next deliveries; end loop naturally
+                kdTree = new([]); //  marks HasUnvisited as false
+            }
         }
 
-        // End at the depot
+        // Complete the route by returning to the depot
         route.Add(Depot);
+
         return route;
     }
 }

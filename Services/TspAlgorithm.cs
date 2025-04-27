@@ -9,102 +9,131 @@ namespace RouteOptimizationApi.Services;
 
 public static partial class TspAlgorithm
 {
-    private static readonly Random randomGenerator = new Random();
+    private static readonly Random randomGenerator = new();
 
-    public static readonly Delivery Depot = new Delivery(0, 0, 0);
+    public static readonly Delivery Depot = new(0, 0, 0);
 
     public delegate void ProgressReporter(long itemsProcessed);
 
+    /// <summary>
+    /// Generates a list of random delivery points within the specified coordinate range,
+    /// ensuring that each delivery point is unique and does not overlap with the depot.
+    /// </summary>
+    /// <param name="count">Number of deliveries to generate.</param>
+    /// <param name="minCoord">Minimum allowed coordinate value.</param>
+    /// <param name="maxCoord">Maximum allowed coordinate value.</param>
+    /// <returns>A list of randomly generated unique deliveries.</returns>
     public static List<Delivery> GenerateRandomDeliveries(int count, int minCoord, int maxCoord)
     {
-        if (count <= 0) return new List<Delivery>();
+        // No deliveries requested, return empty list immediately
+        if (count <= 0)
+            return [];
 
-        List<Delivery> deliveries = new List<Delivery>(count);
-        HashSet<(int, int)> usedCoordinates = new HashSet<(int, int)>
-        {
-            (Depot.X, Depot.Y)
-        };
+        // Initialize deliveries list and used coordinates set (depot included)
+        List<Delivery> deliveries = new(count);
+        HashSet<(int, int)> usedCoordinates = [(Depot.X, Depot.Y)];
 
+        // Calculate total available unique positions in the given range (excluding depot)
         long availableSlots = ((long)maxCoord - minCoord + 1) * ((long)maxCoord - minCoord + 1) - 1;
-        if (count > availableSlots) count = (int)Math.Max(0, availableSlots);
+
+        // Ensure we don't exceed available unique slots
+        count = (int)Math.Min(count, availableSlots);
 
         for (int deliveryIndex = 1; deliveryIndex <= count; deliveryIndex++)
         {
-            int attempts = 0;
-            while (true)
+            bool addedSuccessfully = false;
+
+            // Try generating unique coordinates until we reach the maximum number of attempts
+            for (int attempts = 0; attempts < Constants.MaxAttempts; attempts++)
             {
                 int randomX = randomGenerator.Next(minCoord, maxCoord + 1);
                 int randomY = randomGenerator.Next(minCoord, maxCoord + 1);
-                attempts++;
-                if (attempts > Constants.MaxAttempts) return deliveries;
+
+                // Try adding the random coordinates; if successful, create the delivery
                 if (usedCoordinates.Add((randomX, randomY)))
                 {
                     deliveries.Add(new Delivery(deliveryIndex, randomX, randomY));
+                    addedSuccessfully = true;
                     break;
                 }
             }
+
+            // If we reach maximum attempts without adding successfully, stop generating further deliveries
+            if (!addedSuccessfully)
+                break;
         }
+
         return deliveries;
     }
 
+
+    /// <summary>
+    /// Optimizes the given delivery route using the 2-Opt algorithm.
+    /// Continuously improves the route by swapping segments until no further improvements are possible,
+    /// or the maximum number of iterations is reached.
+    /// </summary>
+    /// <param name="initialRoute">The initial delivery route to be optimized.</param>
+    /// <returns>The optimized delivery route.</returns>
     public static List<Delivery> OptimizeRouteUsing2Opt(List<Delivery> initialRoute)
     {
-        if (initialRoute == null || initialRoute.Count < 4)
+        // No optimization needed for null or short routes
+        if (initialRoute is null || initialRoute.Count < 4)
+            return initialRoute ?? [];
+
+        List<Delivery> optimizedRoute = [.. initialRoute];
+        bool isImproved;
+        int iteration = 0;
+
+        do
         {
-            return initialRoute ?? new List<Delivery>();
-        }
+            isImproved = false;
+            iteration++;
 
-        List<Delivery> currentRoute = new List<Delivery>(initialRoute);
-        bool improvement = true;
-        int maxIterations = Constants.Max2OptIterations;
-        int iterationCount = 0;
-
-        while (improvement && iterationCount < maxIterations)
-        {
-            improvement = false;
-            iterationCount++;
-
-            for (int primaryIndex = 0; primaryIndex < currentRoute.Count - 3; primaryIndex++)
+            for (int i = 0; i < optimizedRoute.Count - 3; i++)
             {
-                for (int secondaryIndex = primaryIndex + 2; secondaryIndex < currentRoute.Count - 1; secondaryIndex++)
+                for (int j = i + 2; j < optimizedRoute.Count - 1; j++)
                 {
-                    Delivery deliveryA = currentRoute[primaryIndex];
-                    Delivery deliveryB = currentRoute[primaryIndex + 1];
-                    Delivery deliveryC = currentRoute[secondaryIndex];
-                    Delivery deliveryD = currentRoute[secondaryIndex + 1];
+                    Delivery nodeA = optimizedRoute[i];
+                    Delivery nodeB = optimizedRoute[i + 1];
+                    Delivery nodeC = optimizedRoute[j];
+                    Delivery nodeD = optimizedRoute[j + 1];
 
-                    double currentCost = CalculateEuclideanDistance(deliveryA, deliveryB)
-                        + CalculateEuclideanDistance(deliveryC, deliveryD);
+                    double originalDistance = CalculateEuclideanDistance(nodeA, nodeB)
+                                            + CalculateEuclideanDistance(nodeC, nodeD);
 
-                    double updatedCost = CalculateEuclideanDistance(deliveryA, deliveryC)
-                        + CalculateEuclideanDistance(deliveryB, deliveryD);
+                    double swappedDistance = CalculateEuclideanDistance(nodeA, nodeC)
+                                           + CalculateEuclideanDistance(nodeB, nodeD);
 
-                    bool cheaperSwap = updatedCost < currentCost - Constants.ImprovementThreshold;
-                    if (cheaperSwap)
+                    // Check if swapping results in a shorter route segment
+                    if (swappedDistance < originalDistance - Constants.ImprovementThreshold)
                     {
-                        ReverseSegment(currentRoute, primaryIndex + 1, secondaryIndex);
-                        improvement = true;
+                        ReverseSegment(optimizedRoute, i + 1, j);
+                        isImproved = true;
                     }
                 }
             }
-        }
-        return currentRoute;
+
+        } while (isImproved && iteration < Constants.Max2OptIterations);
+
+        return optimizedRoute;
     }
 
-    private static void ReverseSegment(List<Delivery> route, int startIndex, int endIndex)
+    /// <summary>
+    /// Reverses the segment of deliveries in the route between the specified indices.
+    /// </summary>
+    /// <param name="route">The delivery route to modify.</param>
+    /// <param name="start">Start index of the segment to reverse.</param>
+    /// <param name="end">End index of the segment to reverse.</param>
+    private static void ReverseSegment(List<Delivery> route, int start, int end)
     {
-        while (startIndex < endIndex)
+        while (start < end)
         {
-            Delivery tempDelivery = route[startIndex];
-            route[startIndex] = route[endIndex];
-            route[endIndex] = tempDelivery;
-            startIndex++;
-            endIndex--;
+            (route[start], route[end]) = (route[end], route[start]);
+            start++;
+            end--;
         }
     }
 
-    // NOTE: FindBestPartitionBinarySearch and related helpers are now
-    // in TspAlgorithm.PartitionBinarySearch.cs.
 
     public static double ComputeSubRouteDistanceWithDepot(List<Delivery> route, int startIndex, int endIndex)
     {

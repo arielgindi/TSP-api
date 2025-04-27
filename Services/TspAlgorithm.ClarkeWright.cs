@@ -31,14 +31,11 @@ public static partial class TspAlgorithm
     /// </summary>
     public static List<Delivery> ConstructClarkeWrightRoute(List<Delivery> deliveries)
     {
-        // Handle trivial cases.
-        if (deliveries == null || deliveries.Count == 0)
+        // Handle trivial cases first.
+        List<Delivery>? trivialResult = CheckTrivialCases(deliveries);
+        if (trivialResult != null)
         {
-            return [Depot, Depot];
-        }
-        if (deliveries.Count == 1)
-        {
-            return [Depot, deliveries[0], Depot];
+            return trivialResult;
         }
 
         // Convert all deliveries to an array for quick indexing.
@@ -46,66 +43,22 @@ public static partial class TspAlgorithm
         int totalDeliveries = deliveryArray.Length;
 
         // 1) Precompute distances in O(n²).
-        double[] distanceFromDepot = new double[totalDeliveries];
-        for (int deliveryIndex = 0; deliveryIndex < totalDeliveries; deliveryIndex++)
-        {
-            distanceFromDepot[deliveryIndex] = CalculateEuclideanDistance(Depot, deliveryArray[deliveryIndex]);
-        }
-
-        double[,] distanceBetweenDeliveries = new double[totalDeliveries, totalDeliveries];
-        for (int rowIndex = 0; rowIndex < totalDeliveries; rowIndex++)
-        {
-            for (int colIndex = rowIndex + 1; colIndex < totalDeliveries; colIndex++)
-            {
-                double currentDistance = CalculateEuclideanDistance(deliveryArray[rowIndex], deliveryArray[colIndex]);
-                distanceBetweenDeliveries[rowIndex, colIndex] = currentDistance;
-                distanceBetweenDeliveries[colIndex, rowIndex] = currentDistance;
-            }
-        }
+        double[] distanceFromDepot = PrecomputeDistanceFromDepot(deliveryArray);
+        double[,] distanceBetweenDeliveries = PrecomputeDistanceBetweenDeliveries(deliveryArray);
 
         // 2) Gather all positive savings in a single pass (O(n²)).
-        //    We store them in an array for better performance.
-        int maxPairs = totalDeliveries * (totalDeliveries - 1) / 2;
-        SavingPair[] savingsBuffer = new SavingPair[maxPairs];
-        int validSavingsCount = 0;
-
-        for (int firstDeliveryIndex = 0; firstDeliveryIndex < totalDeliveries; firstDeliveryIndex++)
-        {
-            double depotDistanceFirst = distanceFromDepot[firstDeliveryIndex];
-            for (int secondDeliveryIndex = firstDeliveryIndex + 1; secondDeliveryIndex < totalDeliveries; secondDeliveryIndex++)
-            {
-                double savingValue = depotDistanceFirst
-                                     + distanceFromDepot[secondDeliveryIndex]
-                                     - distanceBetweenDeliveries[firstDeliveryIndex, secondDeliveryIndex];
-
-                // Only keep positive (beneficial) savings.
-                if (savingValue > 0.0)
-                {
-                    savingsBuffer[validSavingsCount] =
-                        new SavingPair(firstDeliveryIndex, secondDeliveryIndex, savingValue);
-                    validSavingsCount++;
-                }
-            }
-        }
-
-        // Slice out the valid portion.
-        SavingPair[] finalSavings = new SavingPair[validSavingsCount];
-        Array.Copy(savingsBuffer, finalSavings, validSavingsCount);
+        SavingPair[] finalSavings = GatherPositiveSavings(distanceFromDepot, distanceBetweenDeliveries);
 
         // 3) Sort savings in ascending order using LSD Radix, then reverse for descending.
         LSDSortDoubleAscending(finalSavings);
         ReverseArray(finalSavings);
 
         // 4) Use union-find for merges in O(1).
-        //    Each delivery starts as its own “route” with one node.
-        RouteUnionFind routeUnion = new(totalDeliveries);
-
-        // Insert merges by descending savings (largest first).
+        RouteUnionFind routeUnion = new RouteUnionFind(totalDeliveries);
         foreach (SavingPair savingPair in finalSavings)
         {
             routeUnion.AttemptMerge(savingPair.IndexA, savingPair.IndexB);
         }
-
 
         // 5) Construct final route from the union-find chains.
         List<Delivery> finalRoute = routeUnion.BuildRoute(deliveryArray);
@@ -115,6 +68,102 @@ public static partial class TspAlgorithm
         finalRoute.Add(Depot);
 
         return finalRoute;
+    }
+
+    // Checks if we have zero or one delivery and returns a trivial route if so.
+    // Otherwise, returns null to proceed with the main algorithm.
+    private static List<Delivery>? CheckTrivialCases(List<Delivery> deliveries)
+    {
+        if (deliveries == null || deliveries.Count == 0)
+        {
+            // Return just depot -> depot
+            return [Depot, Depot];
+        }
+
+        if (deliveries.Count == 1)
+        {
+            // Return depot -> single delivery -> depot
+            return [Depot, deliveries[0], Depot];
+        }
+
+        return null;
+    }
+
+    // Gets distance from depot to each delivery.
+    private static double[] PrecomputeDistanceFromDepot(Delivery[] deliveryArray)
+    {
+        int totalDeliveries = deliveryArray.Length;
+        double[] distanceFromDepot = new double[totalDeliveries];
+
+        for (int deliveryIndex = 0; deliveryIndex < totalDeliveries; deliveryIndex++)
+        {
+            distanceFromDepot[deliveryIndex] = CalculateEuclideanDistance(Depot, deliveryArray[deliveryIndex]);
+        }
+
+        return distanceFromDepot;
+    }
+
+    // Creates a matrix of distances between all deliveries.
+    private static double[,] PrecomputeDistanceBetweenDeliveries(Delivery[] deliveryArray)
+    {
+        int totalDeliveries = deliveryArray.Length;
+        double[,] distanceMatrix = new double[totalDeliveries, totalDeliveries];
+
+        for (int rowIndex = 0; rowIndex < totalDeliveries; rowIndex++)
+        {
+            for (int colIndex = rowIndex + 1; colIndex < totalDeliveries; colIndex++)
+            {
+                double currentDistance = CalculateEuclideanDistance(
+                    deliveryArray[rowIndex],
+                    deliveryArray[colIndex]
+                );
+
+                distanceMatrix[rowIndex, colIndex] = currentDistance;
+                distanceMatrix[colIndex, rowIndex] = currentDistance;
+            }
+        }
+
+        return distanceMatrix;
+    }
+
+    // Gathers all positive (beneficial) savings from the precomputed distances.
+    private static SavingPair[] GatherPositiveSavings(
+        double[] distanceFromDepot,
+        double[,] distanceBetweenDeliveries
+    )
+    {
+        int totalDeliveries = distanceFromDepot.Length;
+        int maxPairs = totalDeliveries * (totalDeliveries - 1) / 2;
+        SavingPair[] savingsBuffer = new SavingPair[maxPairs];
+        int validSavingsCount = 0;
+
+        for (int firstDeliveryIndex = 0; firstDeliveryIndex < totalDeliveries; firstDeliveryIndex++)
+        {
+            double depotDistanceFirst = distanceFromDepot[firstDeliveryIndex];
+
+            for (int secondDeliveryIndex = firstDeliveryIndex + 1; secondDeliveryIndex < totalDeliveries; secondDeliveryIndex++)
+            {
+                double savingValue = depotDistanceFirst
+                                     + distanceFromDepot[secondDeliveryIndex]
+                                     - distanceBetweenDeliveries[firstDeliveryIndex, secondDeliveryIndex];
+
+                // Only keep positive (beneficial) savings.
+                if (savingValue > 0.0)
+                {
+                    savingsBuffer[validSavingsCount] = new SavingPair(
+                        firstDeliveryIndex,
+                        secondDeliveryIndex,
+                        savingValue
+                    );
+                    validSavingsCount++;
+                }
+            }
+        }
+
+        // Copy only the valid portion of the array.
+        SavingPair[] finalSavings = new SavingPair[validSavingsCount];
+        Array.Copy(savingsBuffer, finalSavings, validSavingsCount);
+        return finalSavings;
     }
 
     /// <summary>
@@ -141,36 +190,40 @@ public static partial class TspAlgorithm
     }
 
     /// <summary>
-    /// Sorts the array of SavingPair by ascending 'SavingValue' using a stable LSD (least significant digit)
-    /// radix sort on the 64-bit representation of doubles. This preserves exact ordering
-    /// for positive doubles by flipping the sign bit.
+    /// Sorts an array of SavingPair based on the SavingValue in ascending order using a stable
+    /// Least Significant Digit (LSD) radix sort tailored for double values.
+    ///
+    /// It correctly sorts doubles by manipulating their bits to preserve numeric ordering.
     ///
     /// Example:
     /// --------
-    ///   var savings = new SavingPair[] { new (0,1,  50.0), new (0,2,  10.0), new (1,2, 200.0) };
-    ///   LSDSortDoubleAscending(savings);
-    ///   // now sorted ascending by 'SavingValue': [ (0,2,10.0), (0,1,50.0), (1,2,200.0) ]
+    /// var savings = new SavingPair[] { new (0,1, 50.0), new (0,2, 10.0), new (1,2, 200.0) };
+    /// LSDSortDoubleAscending(savings);
+    /// // sorted: [(0,2,10.0), (0,1,50.0), (1,2,200.0)]
     /// </summary>
     private static void LSDSortDoubleAscending(SavingPair[] array)
     {
         int length = array.Length;
+
+        // Early exit if array is empty or has one element (already sorted)
         if (length <= 1) return;
 
         SavingPair[] buffer = new SavingPair[length];
 
-        // Perform 8 passes (one byte per pass in 64-bit double).
-        for (int shift = 0; shift < 64; shift += 8)
+        // Each double is 64-bit (8 bytes), sorting from least significant byte
+        for (int byteShift = 0; byteShift < 64; byteShift += 8)
         {
-            // Count the frequency of each byte value (0..255).
             int[] count = new int[256];
-            for (int recordIndex = 0; recordIndex < length; recordIndex++)
+
+            // Count occurrence of each byte value
+            for (int i = 0; i < length; i++)
             {
-                ulong bits = DoubleToSortableBits(array[recordIndex].SavingValue);
-                int bucket = (int)((bits >> shift) & 0xFF);
+                ulong bits = DoubleToSortableBits(array[i].SavingValue);
+                int bucket = (int)((bits >> byteShift) & 0xFF);
                 count[bucket]++;
             }
 
-            // Create prefix sums for stable distribution.
+            // Compute starting index for each bucket (prefix sum)
             int[] prefixSum = new int[256];
             prefixSum[0] = 0;
             for (int bucketIndex = 1; bucketIndex < 256; bucketIndex++)
@@ -178,19 +231,20 @@ public static partial class TspAlgorithm
                 prefixSum[bucketIndex] = prefixSum[bucketIndex - 1] + count[bucketIndex - 1];
             }
 
-            // Distribute into the buffer array in stable order.
-            for (int recordIndex = 0; recordIndex < length; recordIndex++)
+            // Distribute elements into buffer in correct bucket positions
+            for (int i = 0; i < length; i++)
             {
-                ulong bits = DoubleToSortableBits(array[recordIndex].SavingValue);
-                int bucket = (int)((bits >> shift) & 0xFF);
-                int destinationIndex = prefixSum[bucket]++;
-                buffer[destinationIndex] = array[recordIndex];
+                ulong bits = DoubleToSortableBits(array[i].SavingValue);
+                int bucket = (int)((bits >> byteShift) & 0xFF);
+                int position = prefixSum[bucket]++;
+                buffer[position] = array[i];
             }
 
-            // Copy back for next pass.
+            // Copy sorted data back to original array for next iteration
             Array.Copy(buffer, array, length);
         }
     }
+
 
     /// <summary>
     /// Converts a positive double into a sortable unsigned 64-bit pattern
@@ -211,7 +265,6 @@ public static partial class TspAlgorithm
         return (ulong)flipped;
     }
 
-
     /// <summary>
     /// Represents a specialized union-find structure for Clarke-Wright routes.
     /// Each delivery starts as its own route. We track the "head" and "tail" of each route,
@@ -221,7 +274,6 @@ public static partial class TspAlgorithm
     {
         private readonly int[] parent;
         private readonly int[] rank;
-
         private readonly int[] routeHead;
         private readonly int[] routeTail;
         private readonly int[] nextIndexInRoute;
@@ -322,7 +374,7 @@ public static partial class TspAlgorithm
 
         private int FindLeader(int node)
         {
-            // Path compression for O(α(n)) ~ O(1).
+            // Path compression for near O(1) performance in practice.
             if (parent[node] != node)
             {
                 parent[node] = FindLeader(parent[node]);
@@ -348,8 +400,6 @@ public static partial class TspAlgorithm
             }
         }
     }
-
-  
 
     /// <summary>
     /// Represents a pair of delivery indices plus the computed saving value.

@@ -29,12 +29,22 @@ namespace RouteOptimizationApi.Services;
 public static partial class TspAlgorithm
 {
     /// <summary>
-    /// Uses a binary search over possible makespan values to split 'optimizedRoute'
-    /// into at most 'numberOfDrivers' sub-routes. Each sub-route starts and ends at the depot.
-    /// 
-    /// The route should look like: [Depot, D1, D2, ..., DN, Depot].
-    /// 'progressReporter' can track how many iterations have happened (optional).
+    /// Splits an optimized route between multiple drivers,
+    /// minimizing the longest distance traveled by any driver.
     /// </summary>
+    /// <param name="optimizedRoute">
+    ///   Complete route: [Depot, D1, D2, ..., Dn, Depot].
+    /// </param>
+    /// <param name="numberOfDrivers">Number of available drivers.</param>
+    /// <param name="progressReporter">
+    ///   Optional callback for progress updates.
+    /// </param>
+    /// <param name="bestCuts">
+    ///   Output: indices marking delivery points where drivers switch.
+    /// </param>
+    /// <param name="minMakespan">
+    ///   Output: shortest possible longest distance traveled by any driver.
+    /// </param>
     public static void FindBestPartitionBinarySearch(
         List<Delivery> optimizedRoute,
         int numberOfDrivers,
@@ -43,107 +53,146 @@ public static partial class TspAlgorithm
         out double minMakespan
     )
     {
-        // Default outputs
+        // set defaults
         bestCuts = Array.Empty<int>();
         minMakespan = 0.0;
-        long iterationCounter = 0;
+        long iterationCount = 0;
 
-        // Quick checks for trivial or invalid routes
+        // bail out on really trivial inputs
         if (optimizedRoute == null || optimizedRoute.Count < 2)
         {
-            // Means either no route or just the depot repeated
-            progressReporter?.Invoke(iterationCounter);
+            progressReporter?.Invoke(iterationCount);
             return;
         }
 
-        int totalDeliveries = optimizedRoute.Count - 2; // ignoring first and last Depot
-        if (totalDeliveries <= 0)
+        int totalDeliveries = optimizedRoute.Count - 2;
+        if (totalDeliveries < 1)
         {
-            // No real deliveries => 0 makespan
-            progressReporter?.Invoke(iterationCounter);
+            progressReporter?.Invoke(iterationCount);
             return;
         }
 
-        // Build a cache that allows O(1) sub-route distance lookups
         DistanceCache distanceCache = new DistanceCache(optimizedRoute);
 
-        // Handle special driver cases
+        // special cases: no drivers, one driver, or too many drivers
         if (numberOfDrivers <= 0)
         {
             minMakespan = distanceCache.GetTotalRouteDistance();
-            progressReporter?.Invoke(iterationCounter);
+            progressReporter?.Invoke(iterationCount);
             return;
         }
 
         if (numberOfDrivers == 1)
         {
-            // One driver does the entire route
             minMakespan = distanceCache.GetSubRouteDistance(1, totalDeliveries);
-            progressReporter?.Invoke(iterationCounter);
+            progressReporter?.Invoke(iterationCount);
             return;
         }
 
         if (numberOfDrivers >= totalDeliveries)
         {
-            // Enough drivers to give each delivery its own sub-route
-            SplitOneDeliveryPerDriver(distanceCache, numberOfDrivers, totalDeliveries, out bestCuts, out minMakespan);
-            progressReporter?.Invoke(iterationCounter);
+            SplitOneDeliveryPerDriver(
+                distanceCache,
+                numberOfDrivers,
+                totalDeliveries,
+                out bestCuts,
+                out minMakespan
+            );
+            progressReporter?.Invoke(iterationCount);
             return;
         }
 
-        // Binary search bounds:
-        //  - Lower bound = largest single-delivery sub-route
-        //  - Upper bound = distance of entire route
+        // now do the real binary-search work
+        PartitionSearchInternal(
+            distanceCache,
+            numberOfDrivers,
+            totalDeliveries,
+            progressReporter,
+            out bestCuts,
+            out minMakespan
+        );
+    }
+
+    /// <summary>
+    /// Runs a binary search on possible makespan values to find
+    /// the smallest max-distance so the route splits into
+    /// ? numberOfDrivers sub-routes.
+    /// </summary>
+    private static void PartitionSearchInternal(
+        DistanceCache distanceCache,
+        int numberOfDrivers,
+        int totalDeliveries,
+        ProgressReporter progressReporter,
+        out int[] bestCuts,
+        out double minMakespan
+    )
+    {
+        // start from “worst single stop” up to full-round trip
         double lowerBound = GetMaximumSingleDeliveryDistance(distanceCache, totalDeliveries);
         double upperBound = distanceCache.GetTotalRouteDistance();
-        double bestMakespanSoFar = upperBound;
-        int[] bestCutIndicesSoFar = Array.Empty<int>();
 
-        // Limit on the number of binary search iterations
-        int maxBinarySearchIterations = (int)(Math.Log2(Math.Max(1e-9, upperBound)) + totalDeliveries + 100);
+        double bestSoFar = upperBound;
+        int[] bestSoFarCuts = Array.Empty<int>();
 
-        // Perform the binary search
-        while (lowerBound <= upperBound && iterationCounter < maxBinarySearchIterations)
+        int maxIterations = (int)(Math.Log2(Math.Max(upperBound, 1e-9)) + totalDeliveries + 100);
+        long tries = 0;
+
+        while (lowerBound <= upperBound && tries < maxIterations)
         {
-            iterationCounter++;
-            double middleMakespan = lowerBound + (upperBound - lowerBound) * 0.5;
+            tries++;
+            double mid = lowerBound + (upperBound - lowerBound) * 0.5;
 
-            bool isFeasible = IsPartitionFeasible(distanceCache, numberOfDrivers, middleMakespan, out int[] candidateCutIndices);
-            if (isFeasible)
+            bool ok = IsPartitionFeasible(
+                distanceCache,
+                numberOfDrivers,
+                mid,
+                out int[] candidateCuts
+            );
+
+            if (ok)
             {
-                bestMakespanSoFar = middleMakespan;
-                bestCutIndicesSoFar = candidateCutIndices;
-                upperBound = middleMakespan - Constants.Epsilon;
+                bestSoFar = mid;
+                bestSoFarCuts = candidateCuts;
+                upperBound = mid - Constants.Epsilon;
             }
             else
             {
-                lowerBound = middleMakespan + Constants.Epsilon;
+                lowerBound = mid + Constants.Epsilon;
             }
 
-            progressReporter?.Invoke(iterationCounter);
+            progressReporter?.Invoke(tries);
         }
 
-        // If no solution found during the loop, check one last time using bestMakespanSoFar
-        if (bestCutIndicesSoFar.Length == 0)
+        // if we never got a valid cut list, try once more at bestSoFar
+        if (bestSoFarCuts.Length == 0)
         {
-            bool finalCheck = IsPartitionFeasible(distanceCache, numberOfDrivers, bestMakespanSoFar, out bestCutIndicesSoFar);
-            if (!finalCheck)
+            bool ok = IsPartitionFeasible(
+                distanceCache,
+                numberOfDrivers,
+                bestSoFar,
+                out bestSoFarCuts
+            );
+            if (!ok)
             {
-                bestCutIndicesSoFar = Array.Empty<int>();
+                bestSoFarCuts = Array.Empty<int>();
             }
         }
 
-        // Ensure we have enough cut points if we do have a valid route
-        if (bestCutIndicesSoFar.Length < numberOfDrivers - 1 && totalDeliveries > 0)
+        // pad with the last delivery if we still lack cuts
+        if (bestSoFarCuts.Length < numberOfDrivers - 1 && totalDeliveries > 0)
         {
-            bestCutIndicesSoFar = PadCutIndices(bestCutIndicesSoFar, numberOfDrivers, totalDeliveries);
+            bestSoFarCuts = PadCutIndices(
+                bestSoFarCuts,
+                numberOfDrivers,
+                totalDeliveries
+            );
         }
 
-        // Return final results
-        bestCuts = bestCutIndicesSoFar;
-        minMakespan = bestMakespanSoFar;
-        progressReporter?.Invoke(iterationCounter);
+        bestCuts = bestSoFarCuts;
+        minMakespan = bestSoFar;
+        progressReporter?.Invoke(tries);
     }
+
 
     /// <summary>
     /// If the number of drivers is greater or equal to the number of deliveries,
@@ -158,7 +207,7 @@ public static partial class TspAlgorithm
     )
     {
         double maximumSingleDeliveryDistance = 0.0;
-        List<int> cutIndicesList = new List<int>();
+        List<int> cutIndicesList = [];
 
         // For each single delivery, record the largest distance
         for (int deliveryIndex = 1; deliveryIndex <= totalDeliveries; deliveryIndex++)
@@ -221,7 +270,7 @@ public static partial class TspAlgorithm
             return true; // No deliveries means no issue
         }
 
-        List<int> cutIndicesList = new List<int>();
+        List<int> cutIndicesList = [];
         int driversUsed = 1;
         int startIndex = 1;
 
@@ -261,7 +310,7 @@ public static partial class TspAlgorithm
     /// </summary>
     private static int[] PadCutIndices(int[] currentCuts, int numberOfDrivers, int totalDeliveries)
     {
-        List<int> padded = new List<int>(currentCuts);
+        List<int> padded = [.. currentCuts];
         while (padded.Count < numberOfDrivers - 1)
         {
             padded.Add(totalDeliveries);
