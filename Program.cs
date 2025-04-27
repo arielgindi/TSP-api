@@ -24,11 +24,14 @@ public class Program
         builder.Services.AddSignalR();
         builder.Services.AddCors(options =>
         {
-            options.AddPolicy("AllowNextApp", policy =>
+            options.AddPolicy("AllowAll", policy =>
             {
-                policy.WithOrigins("http://localhost:3000").AllowAnyHeader().AllowAnyMethod().AllowCredentials();
+                policy.AllowAnyOrigin()
+                      .AllowAnyHeader()
+                      .AllowAnyMethod();
             });
         });
+
 
         WebApplication app = builder.Build();
 
@@ -39,7 +42,7 @@ public class Program
             app.UseDeveloperExceptionPage();
         }
 
-        app.UseCors("AllowNextApp");
+        app.UseCors("AllowAll");
         app.MapHub<OptimizationHub>("/optimizationhub");
 
         /// <summary>
@@ -54,8 +57,16 @@ public class Program
 
             async Task SendProgress(string step, string msg, string style, object data = null, bool clear = false)
             {
-                await hubContext.Clients.All.SendAsync("ReceiveMessage", new ProgressUpdate(step, msg, style, data ?? new { }, clear));
+                if (!string.IsNullOrEmpty(request.ConnectionId))
+                {
+                    await hubContext.Clients
+                        .Client(request.ConnectionId)
+                        .SendAsync("ReceiveMessage",
+                            new ProgressUpdate(step, msg, style, data ?? new { }, clear));
+                }
             }
+
+
 
             try
             {
@@ -67,7 +78,7 @@ public class Program
                 await SendProgress("SETUP", "Optimization: 2-Opt", "info");
                 await SendProgress("SETUP", "Partitioning Goal: Minimize Makespan (Binary Search)", "info");
 
-                ValidateRequest(request, hubContext);
+                ValidateRequest(request, hubContext, request.ConnectionId);
 
                 await SendProgress("GENERATE", "[1. GENERATING DELIVERIES...]", "step-header");
                 Stopwatch generationTimer = Stopwatch.StartNew();
@@ -78,13 +89,13 @@ public class Program
                 await SendProgress("GENERATE", "✔ " + allDeliveries.Count + " random deliveries generated.", "success", new { Time = FormatTimeSpan(generationTimer.Elapsed) });
                 await SendProgress("GENERATE", "Time elapsed: " + FormatTimeSpan(generationTimer.Elapsed), "detail");
 
-                nearestNeighborResult = await RunOptimizationPath("NN", TspAlgorithm.ConstructNearestNeighborRoute, allDeliveries, request.NumberOfDrivers, hubContext);
+                nearestNeighborResult = await RunOptimizationPath("NN", TspAlgorithm.ConstructNearestNeighborRoute, allDeliveries, request.NumberOfDrivers, hubContext, request.ConnectionId);
                 if (nearestNeighborResult != null)
                 {
                     nearestNeighborResult.GenerationTimeMs = generationMs;
                 }
 
-                clarkeWrightResult = await RunOptimizationPath("CWS", TspAlgorithm.ConstructClarkeWrightRoute, allDeliveries, request.NumberOfDrivers, hubContext);
+                clarkeWrightResult = await RunOptimizationPath("CWS", TspAlgorithm.ConstructClarkeWrightRoute, allDeliveries, request.NumberOfDrivers, hubContext, request.ConnectionId);
                 if (clarkeWrightResult != null)
                 {
                     clarkeWrightResult.GenerationTimeMs = generationMs;
@@ -104,7 +115,7 @@ public class Program
 
                 await SendProgress("COMPARE", "Comparison of Final Makespan:", "info");
                 await SendProgress("COMPARE", "- Nearest Neighbor : " + nearestNeighborResult.MinMakespan.ToString("F2") + " " + Constants.DistanceUnit, "detail", new { Time = FormatTimeSpan(TimeSpan.FromMilliseconds(nearestNeighborResult.PathExecutionTimeMs)) });
-                await SendProgress("COMPARE", "- Clarke-Wright   : " + clarkeWrightResult.MinMakespan.ToString("F2") + " " + Constants.DistanceUnit, "detail", new { Time = FormatTimeSpan(TimeSpan.FromMilliseconds(clarkeWrightResult.PathExecutionTimeMs)) });
+                await SendProgress("COMPARE", "- Clarke-Wright    : " + clarkeWrightResult.MinMakespan.ToString("F2") + " " + Constants.DistanceUnit, "detail", new { Time = FormatTimeSpan(TimeSpan.FromMilliseconds(clarkeWrightResult.PathExecutionTimeMs)) });
                 await SendProgress("COMPARE", "✔ Best Result: '" + bestMethod + "' -> Makespan: " + bestPathResult.MinMakespan.ToString("F2") + " " + Constants.DistanceUnit, "success");
 
                 finalCombinedResult = bestPathResult;
@@ -202,7 +213,8 @@ public class Program
         Func<List<Delivery>, List<Delivery>> routeBuilder,
         List<Delivery> allDeliveries,
         int numberOfDrivers,
-        IHubContext<OptimizationHub> hubContext
+        IHubContext<OptimizationHub> hubContext,
+        string connectionId
     )
     {
         OptimizationResult pathResult = new();
@@ -211,7 +223,12 @@ public class Program
 
         async Task SendProgress(string step, string msg, string style, object data = null, bool clear = false)
         {
-            await hubContext.Clients.All.SendAsync("ReceiveMessage", new ProgressUpdate(step, msg, style, data ?? new { }, clear));
+            if (!string.IsNullOrEmpty(connectionId))
+            {
+                await hubContext.Clients
+                    .Client(connectionId)
+                    .SendAsync("ReceiveMessage", new ProgressUpdate(step, msg, style, data ?? new { }, clear));
+            }
         }
 
         await SendProgress(algorithmLabel, "===== PATH " + algorithmLabel + ": " + fullMethodName + " =====", "header");
@@ -376,7 +393,7 @@ public class Program
     /// <summary>
     /// Validates basic request constraints and sends warnings if they are not met.
     /// </summary>
-    private static void ValidateRequest(OptimizationRequest request, IHubContext<OptimizationHub> hubContext)
+    private static void ValidateRequest(OptimizationRequest request, IHubContext<OptimizationHub> hubContext, string connectionId)
     {
         if (request.NumberOfDeliveries <= 0 || request.NumberOfDrivers <= 0)
         {
@@ -388,12 +405,15 @@ public class Program
         }
         if (request.NumberOfDeliveries < request.NumberOfDrivers)
         {
-            _ = hubContext.Clients.All.SendAsync("ReceiveMessage", new ProgressUpdate(
-                "SETUP",
-                "Warning: Fewer deliveries (" + request.NumberOfDeliveries + ") than drivers (" + request.NumberOfDrivers + "). Some drivers may have no route.",
-                "warning",
-                null
-            ));
+            if (!string.IsNullOrEmpty(connectionId))
+            {
+                _ = hubContext.Clients.Client(connectionId).SendAsync("ReceiveMessage", new ProgressUpdate(
+                    "SETUP",
+                    "Warning: Fewer deliveries (" + request.NumberOfDeliveries + ") than drivers (" + request.NumberOfDrivers + "). Some drivers may have no route.",
+                    "warning",
+                    null
+                ));
+            }
         }
     }
 

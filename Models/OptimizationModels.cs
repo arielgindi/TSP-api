@@ -6,6 +6,7 @@ public class OptimizationRequest
     public int NumberOfDrivers { get; set; }
     public int MinCoordinate { get; set; } = -10000;
     public int MaxCoordinate { get; set; } = 10000;
+    public string ConnectionId {  get; set; }
 }
 
 public class OptimizationResult
