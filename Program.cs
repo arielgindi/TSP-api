@@ -53,7 +53,7 @@ public class Program
             Stopwatch overallStopwatch = Stopwatch.StartNew();
             OptimizationResult nearestNeighborResult = null;
             OptimizationResult clarkeWrightResult = null;
-            OptimizationResult finalCombinedResult = new();
+            OptimizationResult finalCombinedResult = new OptimizationResult();
 
             async Task SendProgress(string step, string msg, string style, object data = null, bool clear = false)
             {
@@ -78,7 +78,7 @@ public class Program
                 await SendProgress("SETUP", "Optimization: 2-Opt", "info");
                 await SendProgress("SETUP", "Partitioning Goal: Minimize Makespan (Binary Search)", "info");
 
-                ValidateRequest(request, hubContext, request.ConnectionId);
+                await ValidateRequestAsync(request, hubContext, request.ConnectionId);
 
                 await SendProgress("GENERATE", "[1. GENERATING DELIVERIES...]", "step-header");
                 Stopwatch generationTimer = Stopwatch.StartNew();
