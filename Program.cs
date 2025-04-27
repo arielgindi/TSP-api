@@ -121,7 +121,7 @@ public class Program
 
                 await SendProgress("DETAILS", "[4. DETAILS OF BEST SOLUTION (" + bestMethod + ")]", "step-header");
                 await SendProgress("DETAILS", "Optimized Route Order (Delivery IDs):", "info");
-                IEnumerable<int> routeIds = finalCombinedResult.OptimizedRoute.Any() ? finalCombinedResult.OptimizedRoute.Select(d => d.Id) : Enumerable.Empty<int>();
+                IEnumerable<int> routeIds = finalCombinedResult.OptimizedRoute.Any() ? finalCombinedResult.OptimizedRoute.Select(d => d.Id) : [];
                 string routeChain = CreateRouteChainString(routeIds, finalCombinedResult.OptimizedRoute.Count);
 
                 await SendProgress("DETAILS", routeChain, "detail");
@@ -319,7 +319,7 @@ public class Program
             return driverRoutes;
         }
 
-        int[] effectiveCuts = cutIndices ?? Array.Empty<int>();
+        int[] effectiveCuts = cutIndices ?? [];
         int currentIndex = 0;
 
         for (int driverIndex = 1; driverIndex <= driverCount; driverIndex++)

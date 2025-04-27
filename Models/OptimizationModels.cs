@@ -13,7 +13,7 @@ public class OptimizationResult
     public string BestMethod { get; set; } = string.Empty;
     public List<Delivery> GeneratedDeliveries { get; set; } = [];
     public List<Delivery> OptimizedRoute { get; set; } = [];
-    public int[] BestCutIndices { get; set; } = Array.Empty<int>();
+    public int[] BestCutIndices { get; set; } = [];
     public double MinMakespan { get; set; }
     public List<DriverRoute> DriverRoutes { get; set; } = [];
     public double InitialDistanceNN { get; set; }
